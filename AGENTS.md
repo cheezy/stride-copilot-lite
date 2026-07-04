@@ -4,7 +4,7 @@ Project guidelines for AI agents working **on** the stride-lite-copilot plugin c
 
 ## What this plugin is
 
-A GitHub Copilot CLI plugin that turns a free-text prompt plus an optional requirements directory into Stride-shaped markdown documents on disk, then drives those documents through a file-based task lifecycle. It is the Copilot port of the Claude Code [stride-lite](https://github.com/cheezy/stride-lite) plugin — same on-disk contract, same field discipline, same `.stride_lite.md` config shape, adapted for Copilot's skill activation and hook intercept points. Four skills are planned (the three create/init flows plus the `stride-lite-workflow` orchestrator), three subagents (`create-decomposer`, `task-explorer`, `task-reviewer`), four `lib/` helpers, and a `hooks/` enforcement layer (`hooks.json` + `stride-lite-hook.sh` + `stride-lite-hook.ps1`) registered with Copilot's PreToolUse/PostToolUse harness so the three `.stride_lite.md` hooks auto-fire at the right lifecycle intercept points. There is no kanban server, no claim/complete loop — the `.stride_lite.md` hooks ARE executed (by the Copilot harness) but everything happens locally against the file tree.
+A GitHub Copilot CLI plugin that turns a free-text prompt plus an optional requirements directory into Stride-shaped markdown documents on disk, then drives those documents through a file-based task lifecycle. It is the Copilot port of the Claude Code [stride-lite](https://github.com/cheezy/stride-lite) plugin — same on-disk contract, same field discipline, same `.stride_lite.md` config shape, adapted for Copilot's skill activation and hook intercept points. Four skills ship (the three create/init flows plus the `stride-lite-workflow` orchestrator), three subagents (`create-decomposer`, `task-explorer`, `task-reviewer`), four `lib/` helpers, and a `hooks/` enforcement layer (`hooks.json` + `stride-lite-copilot-hook.sh` + `stride-lite-copilot-hook.ps1`) registered with Copilot's PreToolUse/PostToolUse harness so the three `.stride_lite.md` hooks auto-fire at the right lifecycle intercept points. There is no kanban server, no claim/complete loop — the `.stride_lite.md` hooks ARE executed (by the Copilot harness) but everything happens locally against the file tree.
 
 ## Repository layout
 
@@ -13,8 +13,8 @@ stride-lite-copilot/
   plugin.json                    ← Copilot plugin manifest (name, version, license, agents/skills/hooks pointers)
   hooks/
     hooks.json                   ← Copilot PreToolUse/PostToolUse handler registration (cross-platform)
-    stride-lite-hook.sh          ← bash executor for macOS/Linux
-    stride-lite-hook.ps1         ← PowerShell executor for Windows (behavior-equivalent to .sh)
+    stride-lite-copilot-hook.sh  ← bash executor for macOS/Linux
+    stride-lite-copilot-hook.ps1 ← PowerShell executor for Windows (behavior-equivalent to .sh)
   skills/
     stride-lite-create-goal/SKILL.md   ← goal-flow orchestrator
     stride-lite-create-task/SKILL.md   ← single-task-flow orchestrator
@@ -29,7 +29,6 @@ stride-lite-copilot/
     load_requirements_dir.md     ← read a directory, concatenate text files
     slugify.md                   ← normalize a title into a filesystem-safe slug
     resolve_output_path.md       ← produce a unique <base>/<slug>(.<ext>)? path
-  commands/                      ← (reserved — Copilot has no Claude Code-style slash commands; W929 confirms the final invocation surface)
   test/                          ← smoke.sh end-to-end harness
   fixtures/                      ← sample-requirements.md + expected-output/ for smoke.sh
   docs/                          ← long-form research notes (port-specific, not user-facing)
@@ -46,7 +45,7 @@ All `lib/*.md` files document a single pure helper with a Contract table, Spec/R
 
 - Manifest is at the repo root (`plugin.json`) instead of `.claude-plugin/plugin.json`.
 - `agents/` files use the `.agent.md` extension and Copilot YAML frontmatter (`tools:` array, etc.).
-- `commands/` may be empty: Copilot has no Claude Code-style slash commands; skills are activated by matching the user's natural-language prompt against the skill's description block. The final shape of the invocation surface is settled by W929.
+- There is no `commands` directory: Copilot has no Claude Code-style slash-command surface; skills are activated by matching the user's natural-language prompt against the skill's description block. (See CHANGELOG "Removed".)
 - `hooks/hooks.json` uses Copilot's PreToolUse/PostToolUse matcher names (the actual matcher strings may differ from Claude Code's `Agent`/`Edit`/`Write`). W928 documents the chosen intercept points.
 
 ## Module boundaries
@@ -71,7 +70,7 @@ When extending the plugin, add new helpers under `lib/`, new agents under `agent
 
 ## Conventions
 
-- **All filenames are kebab-case** (`stride-lite-hook.sh`, `task-explorer.agent.md`). The exception is `lib/*.md` files, where snake_case mirrors the bash function name they document.
+- **All filenames are kebab-case** (`stride-lite-copilot-hook.sh`, `task-explorer.agent.md`). The exception is `lib/*.md` files, where snake_case mirrors the bash function name they document.
 - **Markdown templates use angle-bracket placeholders** (`<task.title>`, `<key_files[0].file_path>`) — these are documentation, not runnable code. Implementing runtimes substitute the values at render time.
 - **Empty values render as `(none)`** rather than disappearing from the output. Reviewability is the goal of the markdown layer.
 - **Code fences are language-tagged** (`` ```bash ``, `` ```yaml ``, `` ```markdown ``). Untagged fences are reserved for raw output blocks where no language fits.
@@ -80,5 +79,5 @@ When extending the plugin, add new helpers under `lib/`, new agents under `agent
 
 - **No Elixir/Phoenix-specific guidance.** Stride Lite is project-agnostic. The full Stride plugin has Phoenix conventions baked in; this plugin does not.
 - **No multi-harness fallbacks beyond Copilot.** This is the Copilot variant. If a Cursor/Continue/Windsurf path is needed, it belongs in its own sibling plugin (`stride-lite-cursor`, etc.), not bolted onto this one.
-- **No server-mediated lifecycle.** stride-lite-copilot has no kanban server, no claim/complete API. The `hooks/` directory holds a Copilot-level enforcement layer (`hooks.json` + `stride-lite-hook.sh` + `stride-lite-hook.ps1`) that auto-fires the three `.stride_lite.md` hooks (`before_task` on subagent dispatch, `after_task` on reviewer dispatch, `after_goal` on the goal.md write that appends `## Completion Summary`). The workflow skill body does not execute hooks directly — the harness does, so the enforcement survives skill amendments.
+- **No server-mediated lifecycle.** stride-lite-copilot has no kanban server, no claim/complete API. The `hooks/` directory holds a Copilot-level enforcement layer (`hooks.json` + `stride-lite-copilot-hook.sh` + `stride-lite-copilot-hook.ps1`) that auto-fires the three `.stride_lite.md` hooks (`before_task` on subagent dispatch, `after_task` on reviewer dispatch, `after_goal` on the goal.md write that appends `## Completion Summary`). The workflow skill body does not execute hooks directly — the harness does, so the enforcement survives skill amendments.
 - **No API client.** A `curl` invocation, a Stride client wrapper, or an HTTP library import is a contract violation. The whole point of this plugin is "no network."
