@@ -177,7 +177,7 @@ Append a `## Completion Summary` section to the active task file at EOF. The sec
 
 ## Hook execution contract
 
-As of v0.9.0 the three hooks (`## before_task`, `## after_task`, `## after_goal`) are **auto-fired by the Copilot harness via `hooks/hooks.json`** — the workflow skill body does NOT execute `.stride_lite.md` hook sections directly. The harness invokes `hooks/stride-lite-hook.sh` on macOS/Linux (which delegates to `hooks/stride-lite-hook.ps1` on native Windows) at three intercept points:
+As of v0.9.0 the three hooks (`## before_task`, `## after_task`, `## after_goal`) are **auto-fired by the Copilot harness via `hooks/hooks.json`** — the workflow skill body does NOT execute `.stride_lite.md` hook sections directly. The harness invokes `hooks/stride-lite-copilot-hook.sh` on macOS/Linux (which delegates to `hooks/stride-lite-copilot-hook.ps1` on native Windows) at three intercept points:
 
 | Section | Phase | Matcher | Trigger condition | Blocking? |
 |---|---|---|---|---|
@@ -198,7 +198,7 @@ The hook environment is the same shell environment the Copilot harness runs in �
 
 The workflow skill's Bash usage is scoped to a specific set of operations. Explicit ✅ examples:
 
-- ✅ `.stride_lite.md` hook execution is performed by the harness via `hooks/stride-lite-hook.sh` (or `.ps1` on native Windows) — this skill body does NOT run `## before_task` / `## after_task` / `## after_goal` directly.
+- ✅ `.stride_lite.md` hook execution is performed by the harness via `hooks/stride-lite-copilot-hook.sh` (or `.ps1` on native Windows) — this skill body does NOT run `## before_task` / `## after_task` / `## after_goal` directly.
 - ✅ `git diff HEAD` — captured by the task-reviewer agent in Step 6 (not directly by this skill; the agent has its own Bash grant).
 - ✅ `ls`, `test -f`, `find` — for filesystem navigation inside the goal directory (listing taskN.md files, checking for task(K+1).md existence).
 - ✅ `git rev-parse --show-toplevel` — for locating the project root (e.g., to inspect `.stride_lite.md` for the user, not to execute it).
@@ -238,10 +238,10 @@ A two-task goal at `docs/implementation/PENDING/add-notifications/` containing `
 **Iteration 1 — task1.md (Emit PubSub broadcast on comment insert).**
 
 - **Step 1.** Scan goal dir. task1.md has no `## Completion Summary` → next task is task1.md.
-- **Step 2.** Read `.stride_lite.md` `## before_task` section. Execute the bash (e.g., `git pull origin main`). Capture exit_code=0, output, duration_ms=2400. Proceed.
+- **Step 2.** The harness auto-fires `.stride_lite.md` `## before_task` (e.g., `git pull origin main`) as a PreToolUse hook on the Step 3 `stride-lite-copilot:task-explorer` dispatch — the skill body does NOT read or execute it. It exits 0 and the dispatch proceeds. (A non-zero exit would `exit 2`, block the dispatch, and surface as a Step 3 failure.)
 - **Step 3.** Dispatch `stride-lite-copilot:task-explorer` with `task1.md` as the prompt. After ~30s the agent appends a `## Exploration Report` section to task1.md covering File state per key_file, Pattern matches (Kanban.Boards.create_board broadcast at boards.ex:42), Related tests (test/kanban/comments_test.exs), Implementation notes (use Kanban.PubSub, follow with-chain placement).
 - **Step 4.** Implement the broadcast. Modify `lib/kanban/comments.ex` (add Phoenix.PubSub.broadcast inside the success arm) and `test/kanban/comments_test.exs` (subscriber test).
-- **Step 5.** Read `.stride_lite.md` `## after_task` section. Execute the bash (e.g., `mix test` and `mix credo --strict`). Capture exit_code=0, duration_ms=18000. Proceed.
+- **Step 5.** The harness auto-fires `.stride_lite.md` `## after_task` (e.g., `mix test` and `mix credo --strict`) as a PreToolUse hook on the Step 6 `stride-lite-copilot:task-reviewer` dispatch — again the skill body does NOT execute it. It exits 0 and the dispatch proceeds. (A non-zero exit would block the reviewer dispatch and surface as a Step 6 failure.)
 - **Step 6.** Dispatch `stride-lite-copilot:task-reviewer` with `task1.md` as the prompt. After ~25s the agent appends a `## Review Report` section. The embedded JSON's `status` is `approved`.
 - **Step 7.** Parse the JSON. `status == approved` → proceed to Step 8.
 - **Step 8.** Append a `## Completion Summary` section to task1.md (one-paragraph synthesis + hook results + review status). Check for task2.md: exists. Return to Step 1.
@@ -252,9 +252,10 @@ A two-task goal at `docs/implementation/PENDING/add-notifications/` containing `
 - **Step 2–7.** Same pattern. The reviewer first returns `changes_requested` (the BoardLive subscribe wasn't filtering by board_id). The workflow loops back to Step 4 (iteration 1 of the review-loop), the implementation is fixed, Step 5/6/7 re-run, the reviewer now returns `approved` (iteration 2 — under the cap). Proceed to Step 8.
 - **Step 8.** Append `## Completion Summary` to task2.md. Check for task3.md: does NOT exist. This was the final task.
 - **Step 8 (continued).** Append `## Completion Summary` to `goal.md` with the goal-level synthesis: "Real-time notifications shipped via 2-task split — broadcast emission in the context module (task1), LiveView subscription in BoardLive.Show (task2). Both tasks reviewed and approved. All hooks completed cleanly."
-- **Step 8 (final).** Execute `.stride_lite.md` `## after_goal` section. If it succeeds, workflow complete. If it fails, surface the failure — goal.md's Completion Summary remains; user re-runs the hook manually.
+- **Step 8 (after_goal).** The append to `goal.md` in the previous sub-step auto-fires `.stride_lite.md` `## after_goal` as a PostToolUse hook (the path ends in `goal.md` and the body contains `## Completion Summary`) — the skill body does NOT execute it. PostToolUse cannot roll back the write, so `after_goal` is advisory: on success the goal is done; on failure the harness emits failure JSON for the user to inspect, and goal.md's Completion Summary remains.
+- **Step 8 (archive move).** Because `after_goal` succeeded (no failure JSON), archive the completed goal by moving its directory from `docs/implementation/PENDING/add-notifications/` to `docs/implementation/IMPLEMENTED/add-notifications/` — using `git mv` when the directory's files are tracked, else plain `mv`, with the collision-suffixing and guard rules described in **Step 8 sub-step 3** of the body (not repeated here). The move happens after the hook fires, so the hook saw the still-PENDING path.
 
-**End state.** Both taskN.md files have full lifecycle sections (Description → ... → Exploration Report → Review Report → Completion Summary). goal.md has a `## Completion Summary` at EOF. The user can navigate the goal directory and see exactly what happened, in order, in each file.
+**End state.** Both taskN.md files have full lifecycle sections (Description → ... → Exploration Report → Review Report → Completion Summary). goal.md has a `## Completion Summary` at EOF. The goal directory has been archived from `docs/implementation/PENDING/add-notifications/` to `docs/implementation/IMPLEMENTED/add-notifications/`. The user can navigate the archived goal directory and see exactly what happened, in order, in each file.
 
 ## Red flags — STOP
 
