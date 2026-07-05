@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.0] - 2026-07-05
+
+### Changed
+
+- **init skill hook-execution framing** — `stride-lite-init/SKILL.md` now correctly attributes hook execution to the Copilot harness (auto-fired via `hooks/hooks.json` at the corresponding lifecycle points), removing the stale "static configuration / the workflow skill executes them" claims and the phantom `install.sh` references; the init skill remains a pure scaffolder.
+- **workflow walkthrough alignment** — `stride-lite-workflow/SKILL.md`'s Concrete walkthrough now describes `before_task`/`after_task`/`after_goal` as harness-auto-fired (consistent with the skill body), documents the terminal `PENDING`→`IMPLEMENTED` archive move on goal close-out, and corrects the hook-script filename references to `stride-lite-copilot-hook.sh` / `.ps1`.
+- **create-decomposer capability surface** — the `create-decomposer` agent's `tools` grant is now `[]`, matching its inline-only, no-codebase-access contract (it previously granted unused `read`/`search`).
+- **AGENTS.md accuracy** — corrected doc-drift so it describes the shipped state: four skills ship (not "planned"), the hook scripts are `stride-lite-copilot-hook.sh` / `.ps1`, and there is no `commands` directory (Copilot uses skill activation).
+
+### Fixed
+
+- **init-template parity enforcement** — `test/smoke.sh` now extracts the canonical `.stride_lite.md` template from `stride-lite-init/SKILL.md` at runtime and asserts byte-parity, replacing a hardcoded copy that had drifted (it referenced a phantom `/stride-lite:init` slash command and a stale `v0.2.0` Note).
+- **hook exit-code-contract coverage** — the bash and PowerShell hook test harnesses gained failing-command cases that assert the exit-code contract: `before_task`/`after_task` block with exit 2, `after_goal` stays advisory at exit 0, all emitting the structured failure JSON.
+
 ## [0.1.0] - 2026-05-27
 
 ### Added
