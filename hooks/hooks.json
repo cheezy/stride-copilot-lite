@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/stride-lite-copilot-hook.sh pre",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/stride-copilot-lite-hook.sh pre",
             "timeout": 60
           }
         ]
@@ -18,7 +18,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/stride-lite-copilot-hook.sh post",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/stride-copilot-lite-hook.sh post",
             "timeout": 60
           }
         ]
@@ -28,7 +28,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/stride-lite-copilot-hook.sh post",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/stride-copilot-lite-hook.sh post",
             "timeout": 60
           }
         ]

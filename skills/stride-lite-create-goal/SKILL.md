@@ -60,7 +60,7 @@ REQUIREMENTS_TEXT="$(load_requirements_dir "$REQUIREMENTS_DIR")"
 
 ### Step 3 — Dispatch the create-decomposer subagent
 
-Dispatch `create-decomposer` (defined at `stride-lite-copilot/agents/create-decomposer.agent.md`) with three inputs:
+Dispatch `create-decomposer` (defined at `stride-copilot-lite/agents/create-decomposer.agent.md`) with three inputs:
 
 | Input | Value |
 |---|---|

@@ -3,17 +3,17 @@ param(
     [string]$Phase = ''
 )
 
-# stride-lite-copilot-hook.ps1 — Bridges harness hooks to stride-lite-copilot .stride_lite.md hook execution.
+# stride-copilot-lite-hook.ps1 — Bridges harness hooks to stride-copilot-lite .stride_lite.md hook execution.
 #
-# PowerShell companion to stride-lite-copilot-hook.sh for Windows compatibility.
+# PowerShell companion to stride-copilot-lite-hook.sh for Windows compatibility.
 # Called by the harness's PreToolUse/PostToolUse hooks (configured in hooks.json).
 # Receives the hook JSON on stdin, determines whether the tool call is one of the
-# three stride-lite-copilot trigger conditions, and if so executes the corresponding
+# three stride-copilot-lite trigger conditions, and if so executes the corresponding
 # `## before_task` / `## after_task` / `## after_goal` section from .stride_lite.md.
 #
-# Trigger conditions (identical to stride-lite-copilot-hook.sh):
-#   pre  + Agent + subagent_type == "stride-lite-copilot:task-explorer" → before_task  (blocking)
-#   pre  + Agent + subagent_type == "stride-lite-copilot:task-reviewer" → after_task   (blocking)
+# Trigger conditions (identical to stride-copilot-lite-hook.sh):
+#   pre  + Agent + subagent_type == "stride-copilot-lite:task-explorer" → before_task  (blocking)
+#   pre  + Agent + subagent_type == "stride-copilot-lite:task-reviewer" → after_task   (blocking)
 #   post + (Edit|edit|Write|create) + file_path ~ */goal.md + body contains
 #                                                 "## Completion Summary"  → after_goal  (advisory)
 #
@@ -23,13 +23,13 @@ param(
 # after_task are dormant under Copilot today; the after_goal hook fires correctly on
 # both runtimes via the Edit|edit / Write|create matchers in hooks.json.
 #
-# Usage: echo '<hook-json>' | pwsh stride-lite-copilot-hook.ps1 <pre|post>
+# Usage: echo '<hook-json>' | pwsh stride-copilot-lite-hook.ps1 <pre|post>
 #
 # Exit codes:
 #   0 — success, no-op, or non-trigger
 #   2 — blocking PreToolUse failure (only meaningful for pre + before_task/after_task)
 #
-# Cross-platform parity contract: this script and stride-lite-copilot-hook.sh MUST detect
+# Cross-platform parity contract: this script and stride-copilot-lite-hook.sh MUST detect
 # the same three trigger conditions, produce equivalent single-line JSON results
 # for the same input, and apply the same exit-code contract.
 
@@ -95,8 +95,8 @@ switch ($Phase) {
         # equivalent event yet; this branch fires only under Claude Code today.
         if ($ToolName -eq 'Agent') {
             switch ($SubagentType) {
-                'stride-lite-copilot:task-explorer' { $HookName = 'before_task'; $Blocking = $true }
-                'stride-lite-copilot:task-reviewer' { $HookName = 'after_task';  $Blocking = $true }
+                'stride-copilot-lite:task-explorer' { $HookName = 'before_task'; $Blocking = $true }
+                'stride-copilot-lite:task-reviewer' { $HookName = 'after_task';  $Blocking = $true }
             }
         }
     }
@@ -239,7 +239,7 @@ function Invoke-StrideLiteSection {
                 # capturing it in the caller's `$rc = Invoke-StrideLiteSection`
                 # assignment.
                 [Console]::Out.WriteLine(($failureResult | ConvertTo-Json -Depth 5 -Compress))
-                [Console]::Error.WriteLine("stride-lite-copilot $Section hook failed on command $($cmdIndex + 1)/$($cmdTotal): $execTrimmed")
+                [Console]::Error.WriteLine("stride-copilot-lite $Section hook failed on command $($cmdIndex + 1)/$($cmdTotal): $execTrimmed")
                 if ($cmdStderr) { [Console]::Error.WriteLine($cmdStderr) }
 
                 return 2

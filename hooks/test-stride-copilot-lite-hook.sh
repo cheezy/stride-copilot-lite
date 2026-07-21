@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# test-stride-lite-copilot-hook.sh — Smoke test for the bash hook executor.
+# test-stride-copilot-lite-hook.sh — Smoke test for the bash hook executor.
 #
 # Exercises the three .stride_lite.md trigger conditions plus the env-var
 # defaulted-fallback and the cross-runtime field-name handling
@@ -9,16 +9,16 @@
 # The stride-copilot/hooks/test-stride-hook.sh harness (60k lines, ~100 cases)
 # is the heavier reference if we need expanded coverage later.
 #
-# Usage: bash test-stride-lite-copilot-hook.sh
+# Usage: bash test-stride-copilot-lite-hook.sh
 # Exit:  0 = all assertions passed; 1 = one or more failed.
 
 set -u  # NOT set -e — keep running after a failure to surface all problems
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-HOOK_SCRIPT="$SCRIPT_DIR/stride-lite-copilot-hook.sh"
+HOOK_SCRIPT="$SCRIPT_DIR/stride-copilot-lite-hook.sh"
 
 if [ ! -x "$HOOK_SCRIPT" ]; then
-  echo "test-stride-lite-copilot-hook.sh: $HOOK_SCRIPT not executable" >&2
+  echo "test-stride-copilot-lite-hook.sh: $HOOK_SCRIPT not executable" >&2
   exit 1
 fi
 
@@ -107,7 +107,7 @@ run_hook_dir() {
 # --- Case 1: missing .stride_lite.md → silent no-op (exit 0, no stdout) ---
 echo "Case 1: missing .stride_lite.md"
 EMPTY_SCRATCH=$(mktemp -d)
-out=$(printf '{"tool_name":"Agent","tool_input":{"subagent_type":"stride-lite-copilot:task-explorer"}}' \
+out=$(printf '{"tool_name":"Agent","tool_input":{"subagent_type":"stride-copilot-lite:task-explorer"}}' \
   | CLAUDE_PROJECT_DIR="$EMPTY_SCRATCH" "$HOOK_SCRIPT" pre 2>/dev/null)
 rc=$?
 rm -rf "$EMPTY_SCRATCH"
@@ -119,7 +119,7 @@ fi
 
 # --- Case 2: Claude Code snake_case + Agent + task-explorer → fires before_task ---
 echo "Case 2: Claude Code snake_case payload triggers before_task"
-out=$(run_hook pre '{"tool_name":"Agent","tool_input":{"subagent_type":"stride-lite-copilot:task-explorer"}}')
+out=$(run_hook pre '{"tool_name":"Agent","tool_input":{"subagent_type":"stride-copilot-lite:task-explorer"}}')
 if echo "$out" | grep -q '"hook":"before_task"' && echo "$out" | grep -q '"status":"success"'; then
   ok "Claude Code snake_case → before_task fires"
 else
@@ -128,7 +128,7 @@ fi
 
 # --- Case 3: Claude Code snake_case + Agent + task-reviewer → fires after_task ---
 echo "Case 3: Claude Code snake_case payload triggers after_task"
-out=$(run_hook pre '{"tool_name":"Agent","tool_input":{"subagent_type":"stride-lite-copilot:task-reviewer"}}')
+out=$(run_hook pre '{"tool_name":"Agent","tool_input":{"subagent_type":"stride-copilot-lite:task-reviewer"}}')
 if echo "$out" | grep -q '"hook":"after_task"' && echo "$out" | grep -q '"status":"success"'; then
   ok "Claude Code snake_case → after_task fires"
 else
@@ -137,7 +137,7 @@ fi
 
 # --- Case 4: Copilot camelCase toolName fallback → fires before_task ---
 echo "Case 4: Copilot camelCase toolName triggers before_task via fallback"
-out=$(run_hook pre '{"toolName":"Agent","tool_input":{"subagent_type":"stride-lite-copilot:task-explorer"}}')
+out=$(run_hook pre '{"toolName":"Agent","tool_input":{"subagent_type":"stride-copilot-lite:task-explorer"}}')
 if echo "$out" | grep -q '"hook":"before_task"'; then
   ok "Copilot camelCase toolName → before_task fires"
 else
@@ -174,7 +174,7 @@ fi
 # --- Case 8: env-var fallback (CLAUDE_PROJECT_DIR unset) → uses cwd ---
 echo "Case 8: env-var defaulted-fallback when CLAUDE_PROJECT_DIR unset"
 out=$(cd "$SCRATCH" && unset CLAUDE_PROJECT_DIR && \
-  printf '{"tool_name":"Agent","tool_input":{"subagent_type":"stride-lite-copilot:task-explorer"}}' \
+  printf '{"tool_name":"Agent","tool_input":{"subagent_type":"stride-copilot-lite:task-explorer"}}' \
   | "$HOOK_SCRIPT" pre 2>/dev/null)
 if echo "$out" | grep -q '"hook":"before_task"'; then
   ok "Unset CLAUDE_PROJECT_DIR + cwd .stride_lite.md → before_task fires"
@@ -191,7 +191,7 @@ else
   nope "Bash tool name should no-op" "stdout='$out'"
 fi
 
-# --- Case 10: subagent dispatch to a NON-stride-lite-copilot subagent → no-op ---
+# --- Case 10: subagent dispatch to a NON-stride-copilot-lite subagent → no-op ---
 echo "Case 10: Agent with other subagent_type → no-op"
 out=$(run_hook pre '{"tool_name":"Agent","tool_input":{"subagent_type":"Explore"}}')
 if [ -z "$out" ]; then
@@ -202,7 +202,7 @@ fi
 
 # --- Case 11: before_task failing command → blocking exit 2 + failure JSON ---
 echo "Case 11: before_task failing command → blocking exit 2 + failure JSON"
-out=$(run_hook_dir "$FAIL_SCRATCH" pre '{"tool_name":"Agent","tool_input":{"subagent_type":"stride-lite-copilot:task-explorer"}}')
+out=$(run_hook_dir "$FAIL_SCRATCH" pre '{"tool_name":"Agent","tool_input":{"subagent_type":"stride-copilot-lite:task-explorer"}}')
 rc=$?
 if [ "$rc" -eq 2 ] && echo "$out" | grep -q '"hook":"before_task"' && echo "$out" | grep -q '"status":"failed"'; then
   ok "before_task failing command → exit 2 (blocking) + failed-status JSON"
@@ -212,7 +212,7 @@ fi
 
 # --- Case 12: after_task failing command → blocking exit 2 + failure JSON ---
 echo "Case 12: after_task failing command → blocking exit 2 + failure JSON"
-out=$(run_hook_dir "$FAIL_SCRATCH" pre '{"tool_name":"Agent","tool_input":{"subagent_type":"stride-lite-copilot:task-reviewer"}}')
+out=$(run_hook_dir "$FAIL_SCRATCH" pre '{"tool_name":"Agent","tool_input":{"subagent_type":"stride-copilot-lite:task-reviewer"}}')
 rc=$?
 if [ "$rc" -eq 2 ] && echo "$out" | grep -q '"hook":"after_task"' && echo "$out" | grep -q '"status":"failed"'; then
   ok "after_task failing command → exit 2 (blocking) + failed-status JSON"

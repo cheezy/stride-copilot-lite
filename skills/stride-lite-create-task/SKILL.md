@@ -59,7 +59,7 @@ Non-fatal for missing directories — empty stdout when the directory does not e
 
 ### Step 3 — Dispatch create-decomposer in mode=task
 
-Dispatch `create-decomposer` (defined at `stride-lite-copilot/agents/create-decomposer.agent.md`) with:
+Dispatch `create-decomposer` (defined at `stride-copilot-lite/agents/create-decomposer.agent.md`) with:
 
 | Input | Value |
 |---|---|

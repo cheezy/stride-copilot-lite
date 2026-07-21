@@ -2,29 +2,29 @@
 
 A lightweight companion plugin to [Stride](https://www.stridelikeaboss.com) — produces Stride-shaped **goal and task markdown documents on disk** from a free-text prompt plus an optional requirements directory. No API calls, no kanban setup, no auth files. Just markdown.
 
-stride-lite-copilot is the GitHub Copilot CLI port of the Claude Code [stride-lite](https://github.com/cheezy/stride-lite) plugin. It provides the same field discipline (acceptance criteria, key files, pitfalls, testing strategy, dependencies) through Copilot's skill activation, with feature parity with stride-lite as the goal.
+stride-copilot-lite is the GitHub Copilot CLI port of the Claude Code [stride-lite](https://github.com/cheezy/stride-lite) plugin. It provides the same field discipline (acceptance criteria, key files, pitfalls, testing strategy, dependencies) through Copilot's skill activation, with feature parity with stride-lite as the goal.
 
 ## Installation
 
 Install via the Copilot CLI plugin command:
 
 ```bash
-copilot plugin install https://github.com/cheezy/stride-lite-copilot
+copilot plugin install https://github.com/cheezy/stride-copilot-lite
 ```
 
 ### Plugin management
 
 ```bash
-copilot plugin list                              # confirm stride-lite-copilot is loaded
-copilot plugin update stride-lite-copilot        # pull a newer release
-copilot plugin uninstall stride-lite-copilot     # remove
+copilot plugin list                              # confirm stride-copilot-lite is loaded
+copilot plugin update stride-copilot-lite        # pull a newer release
+copilot plugin uninstall stride-copilot-lite     # remove
 ```
 
 After install, the four skills (described below) are discoverable by description match. There are no slash commands — type natural-language prompts and the Copilot agent routes them.
 
 ## Skills
 
-stride-lite-copilot exposes four skills — invoke them by matching natural-language prompts against the skill description blocks. Copilot has no Claude Code-style slash commands; the agent reads your prompt, matches against the four `SKILL.md` description blocks, and activates the best fit. The descriptions are tuned so the matcher reliably routes user intent to the right skill.
+stride-copilot-lite exposes four skills — invoke them by matching natural-language prompts against the skill description blocks. Copilot has no Claude Code-style slash commands; the agent reads your prompt, matches against the four `SKILL.md` description blocks, and activates the best fit. The descriptions are tuned so the matcher reliably routes user intent to the right skill.
 
 ### `stride-lite-create-goal` — decompose a prompt into a multi-task goal directory
 
@@ -57,7 +57,7 @@ Activate when you want to create the project-local `.stride_lite.md` config file
 
 Activation phrases:
 
-- "Initialize stride-lite-copilot in this project."
+- "Initialize stride-copilot-lite in this project."
 - "Create the `.stride_lite.md` config file."
 - "Scaffold the stride-lite hook configuration."
 - "Set up the `.stride_lite.md` skeleton — overwrite the existing one if any." (passes `--force`)
@@ -75,11 +75,11 @@ Activation phrases (intent + path):
 - "Resume the add-notifications goal at docs/implementation/PENDING/add-notifications/."
 - "Process all tasks in docs/implementation/PENDING/<slug>/."
 
-The workflow iterates each `taskN.md` in numeric order: select-next → `## before_task` hook → dispatch `stride-lite-copilot:task-explorer` → implement → `## after_task` hook → dispatch `stride-lite-copilot:task-reviewer` → review-loop (cap 3) → append `## Completion Summary` → next task. On the final task it also writes the goal-level `## Completion Summary` to `goal.md`, fires `## after_goal`, and moves the directory from `PENDING/` to `IMPLEMENTED/`.
+The workflow iterates each `taskN.md` in numeric order: select-next → `## before_task` hook → dispatch `stride-copilot-lite:task-explorer` → implement → `## after_task` hook → dispatch `stride-copilot-lite:task-reviewer` → review-loop (cap 3) → append `## Completion Summary` → next task. On the final task it also writes the goal-level `## Completion Summary` to `goal.md`, fires `## after_goal`, and moves the directory from `PENDING/` to `IMPLEMENTED/`.
 
 ## Configuration
 
-stride-lite-copilot reads a project-local `.stride_lite.md` config file at the repository root. The file has four canonical sections, each a fenced bash block whose body the harness runs at the corresponding lifecycle point:
+stride-copilot-lite reads a project-local `.stride_lite.md` config file at the repository root. The file has four canonical sections, each a fenced bash block whose body the harness runs at the corresponding lifecycle point:
 
 ```markdown
 ## email
@@ -109,8 +109,8 @@ Generate the skeleton by activating `stride-lite-init` (see Skills below) or cop
 
 | Hook | Fires on | Blocking | Purpose |
 |---|---|:---:|---|
-| `## before_task` | `PreToolUse` + subagent dispatch of `stride-lite-copilot:task-explorer` (Step 3 of the workflow) | yes | Pull latest code, install deps, ensure clean working tree |
-| `## after_task` | `PreToolUse` + subagent dispatch of `stride-lite-copilot:task-reviewer` (Step 6) | yes | Run tests / lint / format before the reviewer evaluates the diff |
+| `## before_task` | `PreToolUse` + subagent dispatch of `stride-copilot-lite:task-explorer` (Step 3 of the workflow) | yes | Pull latest code, install deps, ensure clean working tree |
+| `## after_task` | `PreToolUse` + subagent dispatch of `stride-copilot-lite:task-reviewer` (Step 6) | yes | Run tests / lint / format before the reviewer evaluates the diff |
 | `## after_goal` | `PostToolUse` + edit/write on a `goal.md` whose content contains `## Completion Summary` (Step 8) | advisory | Generate a PR, post artifacts, kick off a release pipeline |
 
 You do NOT need `.stride_lite.md` to use the create/init skills — only the `stride-lite-workflow` orchestrator activates the hooks.
@@ -124,11 +124,11 @@ Users coming from the Claude Code [stride-lite](https://github.com/cheezy/stride
 Differences to expect:
 
 - **No slash commands.** Claude Code stride-lite ships `/stride-lite:create-goal`, `/stride-lite:create-task`, `/stride-lite:init`. Copilot has no equivalent surface. Replace those slash calls with the natural-language activation phrases in the Skills section below.
-- **Subagent identities renamed.** Cross-references in `.stride_lite.md` hooks, in your own scripts, or in CI to `stride-lite:task-explorer` / `stride-lite:task-reviewer` need to be renamed to `stride-lite-copilot:task-explorer` / `stride-lite-copilot:task-reviewer` for the Copilot port. The `.stride_lite.md` hook sections themselves are agnostic to the plugin name and need no change.
-- **`hooks/hooks.json` matchers.** stride-lite uses Claude Code matcher names (`Agent`, `Edit`, `Write`); stride-lite-copilot adds the Copilot lowercase forms via regex alternation (`Edit|edit`, `Write|create`). Both runtimes are covered by the same hooks.json.
+- **Subagent identities renamed.** Cross-references in `.stride_lite.md` hooks, in your own scripts, or in CI to `stride-lite:task-explorer` / `stride-lite:task-reviewer` need to be renamed to `stride-copilot-lite:task-explorer` / `stride-copilot-lite:task-reviewer` for the Copilot port. The `.stride_lite.md` hook sections themselves are agnostic to the plugin name and need no change.
+- **`hooks/hooks.json` matchers.** stride-lite uses Claude Code matcher names (`Agent`, `Edit`, `Write`); stride-copilot-lite adds the Copilot lowercase forms via regex alternation (`Edit|edit`, `Write|create`). Both runtimes are covered by the same hooks.json.
 - **Dormant before_task/after_task on Copilot.** See the Copilot CLI hook caveat above. Under Claude Code these still fire normally.
 
-The on-disk artifacts produced by both plugins (goal directories, task markdown files, the embedded task template) are byte-identical — a goal directory created by stride-lite can be driven by `stride-lite-copilot:stride-lite-workflow` and vice versa.
+The on-disk artifacts produced by both plugins (goal directories, task markdown files, the embedded task template) are byte-identical — a goal directory created by stride-lite can be driven by `stride-copilot-lite:stride-lite-workflow` and vice versa.
 
 ## License
 

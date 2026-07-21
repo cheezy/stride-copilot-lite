@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
-# stride-lite-copilot-hook.sh — Bridges harness hooks to stride-lite-copilot .stride_lite.md hook execution.
+# stride-copilot-lite-hook.sh — Bridges harness hooks to stride-copilot-lite .stride_lite.md hook execution.
 #
 # Called by the harness's PreToolUse/PostToolUse hooks (configured in hooks.json).
 # Receives the hook JSON on stdin, determines whether the tool call is one of the
-# three stride-lite-copilot trigger conditions, and if so executes the corresponding
+# three stride-copilot-lite trigger conditions, and if so executes the corresponding
 # `## before_task` / `## after_task` / `## after_goal` section from .stride_lite.md.
 #
 # Trigger conditions:
-#   pre  + Agent + subagent_type == "stride-lite-copilot:task-explorer" → before_task  (blocking)
-#   pre  + Agent + subagent_type == "stride-lite-copilot:task-reviewer" → after_task   (blocking)
+#   pre  + Agent + subagent_type == "stride-copilot-lite:task-explorer" → before_task  (blocking)
+#   pre  + Agent + subagent_type == "stride-copilot-lite:task-reviewer" → after_task   (blocking)
 #   post + (Edit|edit|Write|create) + file_path ~ */goal.md + body contains
 #                                                 "## Completion Summary"  → after_goal  (advisory)
 #
@@ -21,13 +21,13 @@
 #     until Copilot adds the equivalent intercept point. The after_goal hook fires correctly
 #     on both runtimes via the Edit|edit / Write|create matchers in hooks.json.
 #
-# Usage: echo '<hook-json>' | stride-lite-copilot-hook.sh <pre|post>
+# Usage: echo '<hook-json>' | stride-copilot-lite-hook.sh <pre|post>
 #
 # Exit codes:
 #   0 — success, no-op, or non-trigger
 #   2 — blocking PreToolUse failure (only meaningful for pre + before_task/after_task)
 #
-# Cross-platform parity contract: this script and stride-lite-copilot-hook.ps1 MUST detect
+# Cross-platform parity contract: this script and stride-copilot-lite-hook.ps1 MUST detect
 # the same three trigger conditions, produce equivalent single-line JSON results
 # for the same input, and apply the same exit-code contract.
 
@@ -47,13 +47,13 @@ fi
 
 if [ "$_delegate_to_ps1" = "true" ]; then
   SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-  PS1_SCRIPT="$SCRIPT_DIR/stride-lite-copilot-hook.ps1"
+  PS1_SCRIPT="$SCRIPT_DIR/stride-copilot-lite-hook.ps1"
   if [ ! -f "$PS1_SCRIPT" ]; then
-    echo "stride-lite-copilot-hook.sh: Windows detected but stride-lite-copilot-hook.ps1 not found at $PS1_SCRIPT" >&2
+    echo "stride-copilot-lite-hook.sh: Windows detected but stride-copilot-lite-hook.ps1 not found at $PS1_SCRIPT" >&2
     exit 2
   fi
   if ! command -v powershell.exe > /dev/null 2>&1; then
-    echo "stride-lite-copilot-hook.sh: Windows detected but powershell.exe not found in PATH" >&2
+    echo "stride-copilot-lite-hook.sh: Windows detected but powershell.exe not found in PATH" >&2
     exit 2
   fi
   exec powershell.exe -ExecutionPolicy Bypass -File "$PS1_SCRIPT" "$PHASE"
@@ -217,7 +217,7 @@ run_stride_lite_section() {
         "$_completed_json" \
         "$_remaining_json"
 
-      echo "stride-lite-copilot $_section hook failed on command $((_cmd_index + 1))/$_cmd_total: $_trimmed" >&2
+      echo "stride-copilot-lite $_section hook failed on command $((_cmd_index + 1))/$_cmd_total: $_trimmed" >&2
       [ -n "$_cmd_stderr" ] && echo "$_cmd_stderr" >&2
       rm -f "$_completed_file" "$_remaining_file"
       return 2
@@ -274,8 +274,8 @@ case "$PHASE" in
     if [ "$TOOL_NAME" = "Agent" ]; then
       SUBAGENT_TYPE=$(_extract_string "subagent_type" "$INPUT")
       case "$SUBAGENT_TYPE" in
-        stride-lite-copilot:task-explorer) HOOK_NAME="before_task"; BLOCKING=1 ;;
-        stride-lite-copilot:task-reviewer) HOOK_NAME="after_task";  BLOCKING=1 ;;
+        stride-copilot-lite:task-explorer) HOOK_NAME="before_task"; BLOCKING=1 ;;
+        stride-copilot-lite:task-reviewer) HOOK_NAME="after_task";  BLOCKING=1 ;;
       esac
     fi
     ;;
