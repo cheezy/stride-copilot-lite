@@ -16,3 +16,4 @@ Thumbs.db
 
 # Stride orchestrator marker (transient session state)
 .stride/
+.stride_auth.md
