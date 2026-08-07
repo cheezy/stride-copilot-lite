@@ -119,6 +119,30 @@ A failing `before_task` or `after_task` stops the workflow on either runtime: th
 
 The marker is written into **your** project at `.stride/lite-boundary`, alongside a small `.stride/lite-boundary-fired` record. Both are transient session state — add `.stride/` to your project's `.gitignore` so a workflow run does not leave them in a commit.
 
+### Variables available to your hook commands
+
+Each command runs with these in its environment, all derived from your goal and task markdown — there is no server involved:
+
+| Variable | Value | Present in |
+|---|---|---|
+| `HOOK_NAME` | `before_task`, `after_task` or `after_goal` | all three |
+| `AGENT_NAME` | Always `stride-copilot-lite` | all three |
+| `TASK_FILE` | Absolute path to the active `taskN.md` | `before_task`, `after_task` |
+| `TASK_NUMBER` | The `N` from `taskN.md` | `before_task`, `after_task` |
+| `TASK_TITLE` | The task file's first `# ` heading | `before_task`, `after_task` |
+| `GOAL_DIR` | Absolute path to the goal directory | all three |
+| `GOAL_FILE` | Absolute path to `goal.md` | all three |
+| `GOAL_SLUG` | Basename of the goal directory | all three |
+| `GOAL_TITLE` | `goal.md`'s first `# ` heading | all three |
+
+```bash
+gh pr create --title "$GOAL_TITLE" --body "Implements $GOAL_SLUG."
+```
+
+A variable that cannot be derived is the **empty string**, never an error — so referencing one is always safe, including under `set -u`. Values arrive as environment values and are never spliced into your command text, so a task title containing `$(...)` or backticks is inert.
+
+If you are migrating a `.stride_lite.md` from the Claude Code [stride-lite](https://github.com/cheezy/stride-lite) plugin, note this set is smaller: there is no `BOARD_ID`, `COLUMN_NAME` or `TASK_STATUS`, because this plugin has no board, column or status. Everything else transfers unchanged.
+
 You do NOT need `.stride_lite.md` to use the create/init skills — only the `stride-copilot-lite-workflow` orchestrator activates the hooks.
 
 ## Migration from stride-lite

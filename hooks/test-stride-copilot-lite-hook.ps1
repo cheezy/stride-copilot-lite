@@ -312,6 +312,93 @@ if ($fired.Count -eq 3 -and $seqOrder -eq 'before_task after_task after_goal') {
     Ok "full workflow pass → 3 firings in order: $seqOrder"
 } else { Nope "full workflow pass should fire each hook once, in order" "count=$($fired.Count) order='$seqOrder'" }
 
+# ==================================================================
+# Hook environment injection (W2022) — mirrors bash cases 27-32.
+# ==================================================================
+
+$EnvScratch = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "stride-copilot-lite-env-$([System.Guid]::NewGuid())")
+$GoalRel = 'docs/implementation/PENDING/add-notifications'
+New-Item -ItemType Directory -Force -Path (Join-Path $EnvScratch $GoalRel) | Out-Null
+$EnvProbe = Join-Path $EnvScratch 'probe.txt'
+Set-Content -LiteralPath (Join-Path $EnvScratch "$GoalRel/goal.md") -Value "# Add real-time notifications`n`nbody" -Encoding UTF8
+Set-Content -LiteralPath (Join-Path $EnvScratch "$GoalRel/task2.md") -Value '# Subscribe $(id) `whoami` ${HOME}' -Encoding UTF8
+
+$probeCmd = 'printf ''%s\n'' "HOOK_NAME=$HOOK_NAME" "AGENT_NAME=$AGENT_NAME" "TASK_FILE=$TASK_FILE" "TASK_NUMBER=$TASK_NUMBER" "TASK_TITLE=$TASK_TITLE" "GOAL_DIR=$GOAL_DIR" "GOAL_FILE=$GOAL_FILE" "GOAL_SLUG=$GOAL_SLUG" "GOAL_TITLE=$GOAL_TITLE" > "' + $EnvProbe + '"'
+$goalCmd  = 'printf ''%s\n'' "HOOK_NAME=$HOOK_NAME" "TASK_NUMBER=$TASK_NUMBER" "GOAL_SLUG=$GOAL_SLUG" "GOAL_TITLE=$GOAL_TITLE" > "' + $EnvProbe + '"'
+Set-Content -LiteralPath (Join-Path $EnvScratch '.stride_lite.md') -Encoding UTF8 -Value @"
+## before_task
+
+``````bash
+$probeCmd
+``````
+
+## after_goal
+
+``````bash
+$goalCmd
+``````
+"@
+
+function Get-Probe($key) {
+    if (-not (Test-Path -LiteralPath $EnvProbe)) { return '' }
+    foreach ($l in (Get-Content -LiteralPath $EnvProbe -Encoding UTF8)) {
+        if ($l.StartsWith("$key=")) { return $l.Substring($key.Length + 1) }
+    }
+    return ''
+}
+
+$TaskRel = "$GoalRel/task2.md"
+
+# --- Case 24: every documented key reaches the executed command ---
+Write-Host "Case 24: all nine exported keys reach the command"
+Remove-Item -LiteralPath $EnvProbe -ErrorAction SilentlyContinue
+$null = Run-Hook-Dir $EnvScratch 'pre' "{`"tool_name`":`"Write`",`"tool_input`":{`"file_path`":`"/p/.stride/lite-boundary`",`"content`":`"stride-lite-boundary:before_task:$TaskRel`"}}"
+$missing = @()
+foreach ($k in @('HOOK_NAME','AGENT_NAME','TASK_FILE','TASK_NUMBER','TASK_TITLE','GOAL_DIR','GOAL_FILE','GOAL_SLUG','GOAL_TITLE')) {
+    if (-not (Test-Path -LiteralPath $EnvProbe)) { $missing += $k; continue }
+    if (-not ((Get-Content -LiteralPath $EnvProbe -Encoding UTF8) -match "^$k=")) { $missing += $k }
+}
+if ($missing.Count -eq 0 -and (Get-Probe 'HOOK_NAME') -eq 'before_task' -and (Get-Probe 'AGENT_NAME') -eq 'stride-copilot-lite' `
+    -and (Get-Probe 'TASK_NUMBER') -eq '2' -and (Get-Probe 'GOAL_SLUG') -eq 'add-notifications' `
+    -and (Get-Probe 'GOAL_TITLE') -eq 'Add real-time notifications') {
+    Ok "all nine keys exported; TASK_NUMBER=2, GOAL_SLUG and GOAL_TITLE derived"
+} else { Nope "exported key set incomplete or wrong" "missing='$($missing -join ',')' number='$(Get-Probe 'TASK_NUMBER')' slug='$(Get-Probe 'GOAL_SLUG')'" }
+
+# --- Case 25: a metacharacter-bearing title is inert ---
+Write-Host "Case 25: shell metacharacters in a task title are inert"
+$t = Get-Probe 'TASK_TITLE'
+if ($t -eq 'Subscribe $(id) `whoami` ${HOME}') {
+    Ok "title reached the command verbatim; nothing expanded or executed"
+} else { Nope "title must arrive literal" "got='$t'" }
+
+# --- Case 26: a marker with no task path → task keys empty, hook still fires ---
+Write-Host "Case 26: marker without a task path → empty task keys, unchanged exit code"
+Remove-Item -LiteralPath $EnvProbe -ErrorAction SilentlyContinue
+$out = Run-Hook-Dir $EnvScratch 'pre' '{"tool_name":"Write","tool_input":{"file_path":"/p/.stride/lite-boundary","content":"stride-lite-boundary:before_task"}}'
+$rc = $LASTEXITCODE
+if ($rc -eq 0 -and $out -match '"status":"success"' -and -not (Get-Probe 'TASK_FILE') -and -not (Get-Probe 'TASK_NUMBER')) {
+    Ok "undeterminable keys export as defined-but-empty; hook fires, exit 0"
+} else { Nope "missing task path must degrade, not fail" "rc=$rc file='$(Get-Probe 'TASK_FILE')'" }
+
+# --- Case 27: a path escaping the project directory is rejected ---
+Write-Host "Case 27: task path outside the project directory is rejected"
+Remove-Item -LiteralPath $EnvProbe -ErrorAction SilentlyContinue
+$null = Run-Hook-Dir $EnvScratch 'pre' '{"tool_name":"Write","tool_input":{"file_path":"/p/.stride/lite-boundary","content":"stride-lite-boundary:before_task:../../../../../../etc/passwd"}}'
+if (-not (Get-Probe 'TASK_FILE') -and -not (Get-Probe 'TASK_TITLE')) {
+    Ok "traversal path rejected → TASK_FILE and TASK_TITLE empty"
+} else { Nope "path outside the project must be rejected" "file='$(Get-Probe 'TASK_FILE')'" }
+
+# --- Case 28: after_goal derives goal context and no task context ---
+Write-Host "Case 28: after_goal exports goal keys and empty task keys"
+Remove-Item -LiteralPath $EnvProbe -ErrorAction SilentlyContinue
+$null = Run-Hook-Dir $EnvScratch 'post' "{`"tool_name`":`"Edit`",`"tool_input`":{`"file_path`":`"$GoalRel/goal.md`",`"new_string`":`"## Completion Summary`"}}"
+if ((Get-Probe 'HOOK_NAME') -eq 'after_goal' -and (Get-Probe 'GOAL_SLUG') -eq 'add-notifications' `
+    -and (Get-Probe 'GOAL_TITLE') -eq 'Add real-time notifications' -and -not (Get-Probe 'TASK_NUMBER')) {
+    Ok "after_goal → goal keys derived, task keys empty"
+} else { Nope "after_goal goal-context derivation" "hook='$(Get-Probe 'HOOK_NAME')' slug='$(Get-Probe 'GOAL_SLUG')'" }
+
+Remove-Item -Recurse -Force $EnvScratch -ErrorAction SilentlyContinue
+
 # --- Cleanup ---
 Remove-Item -Recurse -Force $Scratch -ErrorAction SilentlyContinue
 Remove-Item -Recurse -Force $FailScratch -ErrorAction SilentlyContinue

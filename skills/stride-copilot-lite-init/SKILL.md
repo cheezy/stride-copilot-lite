@@ -96,7 +96,9 @@ The skill writes this exact text to `./.stride_lite.md`. Keep the section order 
 
 This file is created by the `stride-copilot-lite-init` skill. Fill in the fields below.
 
-**Note:** The hook sections are auto-fired by the Copilot harness via `hooks/hooks.json` at the corresponding lifecycle points (`before_task` before the task-explorer dispatch, `after_task` before the task-reviewer dispatch, `after_goal` when the final task's goal.md Completion Summary is written). The format mirrors the full Stride plugin's `.stride.md` so your snippets transfer across plugins.
+**Note:** The hook sections are auto-fired by the Copilot harness via `hooks/hooks.json` at the corresponding lifecycle points (`before_task` and `after_task` on the workflow's boundary-marker write, `after_goal` when the final task's goal.md Completion Summary is written). The format mirrors the full Stride plugin's `.stride.md` so your snippets transfer across plugins.
+
+**Available variables.** Each command runs with `HOOK_NAME`, `AGENT_NAME`, `TASK_FILE`, `TASK_NUMBER`, `TASK_TITLE`, `GOAL_DIR`, `GOAL_FILE`, `GOAL_SLUG` and `GOAL_TITLE` in its environment. A variable that cannot be derived is an empty string rather than an error, so it is always safe to reference one. The board-shaped variables from the full Stride plugin (`BOARD_ID`, `COLUMN_NAME`, `TASK_STATUS`) do not exist here — this plugin has no board.
 
 ## email
 
@@ -105,16 +107,21 @@ your-email@example.com
 ## before_task
 
 ```bash
+# Runs before each task. e.g. git pull origin main
+# echo "Starting task $TASK_NUMBER: $TASK_TITLE"
 ```
 
 ## after_task
 
 ```bash
+# Runs after each task implementation. e.g. mix test
 ```
 
 ## after_goal
 
 ```bash
+# Runs when the final task in a goal completes.
+# gh pr create --title "$GOAL_TITLE" --body "Implements $GOAL_SLUG."
 ```
 ````
 

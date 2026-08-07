@@ -61,6 +61,108 @@ $StrideLiteMd = Join-Path $ProjectDir '.stride_lite.md'
 # plugin's .gitignore already excludes.
 $BoundaryFiredFile = Join-Path (Join-Path $ProjectDir '.stride') 'lite-boundary-fired'
 
+# --- Hook context derivation (W2022) ---
+# Same key set, same empty-string rule and same no-interpolation guarantee as the
+# .sh, per the parity contract. Deliberately omits stride's BOARD_ID/COLUMN_NAME/
+# TASK_STATUS: this plugin has no board, column or status.
+$HookTaskFile = ''
+$HookTaskNumber = ''
+$HookTaskTitle = ''
+$HookGoalDir = ''
+$HookGoalFile = ''
+$HookGoalSlug = ''
+$HookGoalTitle = ''
+
+# A path from a hook payload is untrusted. Resolve it and confirm it sits under
+# the project directory before reading it. Returns '' on rejection.
+# Canonicalize a directory the way bash's `pwd -P` does — following symlinks on
+# every component. Neither GetFullPath nor Resolve-Path does this, and it matters
+# twice over: a symlink inside the project pointing outward would otherwise pass
+# the containment test below, and the .sh/.ps1 parity assertion compares the
+# exported paths byte-for-byte.
+function Get-PhysicalDirectory {
+    param([string]$Dir)
+    $info = [System.IO.DirectoryInfo]::new([System.IO.Path]::GetFullPath($Dir))
+    $target = $info.ResolveLinkTarget($true)
+    if ($target) { return $target.FullName }
+    # Not itself a link — an ancestor still might be, so walk up and rebuild.
+    $parent = $info.Parent
+    if (-not $parent) { return $info.FullName }
+    return (Join-Path (Get-PhysicalDirectory $parent.FullName) $info.Name)
+}
+
+function Resolve-WithinProject {
+    param([string]$P)
+    if (-not $P) { return '' }
+    try {
+        $proj = Get-PhysicalDirectory $ProjectDir
+        $abs = if ([System.IO.Path]::IsPathRooted($P)) { $P } else { Join-Path $proj $P }
+        $abs = [System.IO.Path]::GetFullPath($abs)
+        # Resolve the parent, not the leaf, so a not-yet-existing file still
+        # validates — matching the .sh, which resolves dirname and re-appends.
+        $dir = [System.IO.Path]::GetDirectoryName($abs)
+        $base = [System.IO.Path]::GetFileName($abs)
+        if (-not (Test-Path -LiteralPath $dir -PathType Container)) { return '' }
+        $full = Join-Path (Get-PhysicalDirectory $dir) $base
+        $sep = [System.IO.Path]::DirectorySeparatorChar
+        $projPrefix = if ($proj.EndsWith($sep)) { $proj } else { $proj + $sep }
+        if ($full.StartsWith($projPrefix)) { return $full }
+    } catch {
+        return ''
+    }
+    return ''
+}
+
+# First '# ' heading of a markdown file; '' when missing, unreadable or absent.
+function Get-MarkdownTitle {
+    param([string]$File)
+    if (-not $File -or -not (Test-Path -LiteralPath $File -PathType Leaf)) { return '' }
+    try {
+        foreach ($line in (Get-Content -LiteralPath $File -Encoding UTF8 -ErrorAction Stop)) {
+            if ($line -match '^# (.+)$') { return $Matches[1].TrimEnd() }
+        }
+    } catch {
+        return ''
+    }
+    return ''
+}
+
+function Set-HookContext {
+    param([string]$TaskPath = '', [string]$GoalPath = '')
+    if ($TaskPath) {
+        $resolved = Resolve-WithinProject $TaskPath
+        if ($resolved) {
+            $script:HookTaskFile = $resolved
+            $base = Split-Path -Leaf $resolved
+            if ($base -match '^task([0-9]+)\.md$') { $script:HookTaskNumber = $Matches[1] }
+            $script:HookTaskTitle = Get-MarkdownTitle $resolved
+            $script:HookGoalDir = Split-Path -Parent $resolved
+        }
+    }
+    if ($GoalPath) {
+        $resolved = Resolve-WithinProject $GoalPath
+        if ($resolved) {
+            $script:HookGoalFile = $resolved
+            $script:HookGoalDir = Split-Path -Parent $resolved
+        }
+    }
+    if ($script:HookGoalDir) {
+        $script:HookGoalSlug = Split-Path -Leaf $script:HookGoalDir
+        if (-not $script:HookGoalFile) { $script:HookGoalFile = Join-Path $script:HookGoalDir 'goal.md' }
+        $script:HookGoalTitle = Get-MarkdownTitle $script:HookGoalFile
+    }
+}
+
+# Optional task path trailing the boundary token in the marker body.
+function Get-MarkerTaskPath {
+    param([string]$Body, [string]$Boundary)
+    $prefix = "stride-lite-boundary:${Boundary}:"
+    if ($Body -and $Body.StartsWith($prefix)) {
+        return ($Body.Substring($prefix.Length) -split "`n")[0].Trim()
+    }
+    return ''
+}
+
 # Marker route <-> Agent route de-duplication. Claude Code emits BOTH events for one
 # boundary; the marker route fires first and records the boundary, and the Agent route
 # consumes that record and stands down. Consuming rather than merely reading is what
@@ -106,6 +208,7 @@ if (-not $InputJson) { exit 0 }
 $ToolName = ''
 $SubagentType = ''
 $FilePath = ''
+$ContentBody = ''
 try {
     $parsed = $InputJson | ConvertFrom-Json
     # Claude Code uses tool_name + tool_input (object). Copilot CLI uses toolName + toolArgs
@@ -124,16 +227,29 @@ try {
         if ($ti.PSObject.Properties.Name -contains 'file_path') {
             $FilePath = [string]$ti.file_path
         }
+        # Write uses `content`; Edit uses `new_string`. Either can carry the marker body.
+        if ($ti.PSObject.Properties.Name -contains 'content') {
+            $ContentBody = [string]$ti.content
+        }
+        if (-not $ContentBody -and $ti.PSObject.Properties.Name -contains 'new_string') {
+            $ContentBody = [string]$ti.new_string
+        }
     }
-    if (-not $FilePath -and $parsed.PSObject.Properties.Name -contains 'toolArgs' -and $parsed.toolArgs) {
+    if ((-not $FilePath -or -not $ContentBody) -and $parsed.PSObject.Properties.Name -contains 'toolArgs' -and $parsed.toolArgs) {
         # Copilot CLI: toolArgs is a JSON-encoded string. Decode once more.
         try {
             $tArgs = $parsed.toolArgs | ConvertFrom-Json
-            if ($tArgs.PSObject.Properties.Name -contains 'file_path') {
+            if (-not $FilePath -and $tArgs.PSObject.Properties.Name -contains 'file_path') {
                 $FilePath = [string]$tArgs.file_path
             }
+            if (-not $ContentBody -and $tArgs.PSObject.Properties.Name -contains 'content') {
+                $ContentBody = [string]$tArgs.content
+            }
+            if (-not $ContentBody -and $tArgs.PSObject.Properties.Name -contains 'new_string') {
+                $ContentBody = [string]$tArgs.new_string
+            }
         } catch {
-            # toolArgs not parseable as JSON — leave $FilePath empty.
+            # toolArgs not parseable as JSON — leave the extracted values empty.
         }
     }
 } catch {
@@ -171,6 +287,10 @@ switch ($Phase) {
                 elseif ($InputJson -match 'stride-lite-boundary:after_task') {
                     $HookName = 'after_task';  $Blocking = $true; $MarkerRoute = $true
                 }
+                if ($HookName) {
+                    # Optional task path trailing the boundary token; absent is valid.
+                    Set-HookContext -TaskPath (Get-MarkerTaskPath $ContentBody $HookName)
+                }
             }
         }
     }
@@ -183,6 +303,7 @@ switch ($Phase) {
                 if ($InputJson -match '## Completion Summary') {
                     $HookName = 'after_goal'
                     $Blocking = $false
+                    Set-HookContext -GoalPath $FilePath
                 }
             }
         }
@@ -248,6 +369,21 @@ function Invoke-StrideLiteSection {
     }
 
     Set-Location $ProjectDir
+
+    # Export the derived context for every command below. These are environment
+    # values, never spliced into command text, so a title containing $(...) or
+    # backticks is inert. Every key is exported even when empty. Nothing is
+    # persisted to disk and none of it enters the result JSON.
+    $env:HOOK_NAME   = $Section
+    $env:AGENT_NAME  = 'stride-copilot-lite'
+    $env:TASK_FILE   = $script:HookTaskFile
+    $env:TASK_NUMBER = $script:HookTaskNumber
+    $env:TASK_TITLE  = $script:HookTaskTitle
+    $env:GOAL_DIR    = $script:HookGoalDir
+    $env:GOAL_FILE   = $script:HookGoalFile
+    $env:GOAL_SLUG   = $script:HookGoalSlug
+    $env:GOAL_TITLE  = $script:HookGoalTitle
+
     $completedCmds = @()
     $startTime = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
     $cmdIndex = 0
@@ -262,10 +398,31 @@ function Invoke-StrideLiteSection {
             # stays POSIX-portable (git-bash on Windows ships bash.exe; WSL also
             # provides one). Users who want native PowerShell can wrap their line
             # with `pwsh -c '...'` inside their bash block.
-            $proc = Start-Process -FilePath 'bash' -ArgumentList '-c', $execTrimmed `
-                -RedirectStandardOutput $stdoutFile `
-                -RedirectStandardError $stderrFile `
-                -NoNewWindow -Wait -PassThru
+            #
+            # ProcessStartInfo.ArgumentList, NOT Start-Process -ArgumentList: the
+            # latter re-splits on spaces, so `bash -c "echo hi"` reached bash as
+            # `-c echo hi` and ran `echo` with no arguments — every multi-word hook
+            # command silently did nothing while the executor reported success.
+            # ArgumentList passes each element verbatim with no shell re-parsing.
+            # UseShellExecute=$false also makes the child inherit this process's
+            # environment, which is how the exported TASK_*/GOAL_* values arrive.
+            $psi = [System.Diagnostics.ProcessStartInfo]::new()
+            $psi.FileName = 'bash'
+            $psi.ArgumentList.Add('-c')
+            $psi.ArgumentList.Add($execTrimmed)
+            $psi.RedirectStandardOutput = $true
+            $psi.RedirectStandardError = $true
+            $psi.UseShellExecute = $false
+            $psi.WorkingDirectory = (Get-Location).Path
+
+            $proc = [System.Diagnostics.Process]::Start($psi)
+            # Read both pipes concurrently — a sequential ReadToEnd deadlocks when
+            # the other stream's buffer fills.
+            $outTask = $proc.StandardOutput.ReadToEndAsync()
+            $errTask = $proc.StandardError.ReadToEndAsync()
+            $proc.WaitForExit()
+            [System.IO.File]::WriteAllText($stdoutFile, $outTask.GetAwaiter().GetResult())
+            [System.IO.File]::WriteAllText($stderrFile, $errTask.GetAwaiter().GetResult())
 
             if ($proc.ExitCode -eq 0) {
                 $completedCmds += $execTrimmed

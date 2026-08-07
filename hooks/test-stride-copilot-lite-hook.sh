@@ -407,6 +407,156 @@ else
   nope "full workflow pass should fire each hook once, in order" "count=$seq_actual order='$seq_order'"
 fi
 
+# ==================================================================
+# Hook environment injection (W2022) — the nine exported keys.
+# ==================================================================
+
+# A scratch project with a real goal directory, plus hook sections that dump the
+# exported environment to a probe file. A probe file is used rather than stdout
+# because the executors forward command output to stderr, and the point of these
+# cases is the VALUES the child received, not where its output went.
+ENV_SCRATCH=$(mktemp -d)
+ENV_PROBE="$ENV_SCRATCH/probe.txt"
+mkdir -p "$ENV_SCRATCH/docs/implementation/PENDING/add-notifications"
+printf '# Add real-time notifications\n\nbody\n' \
+  > "$ENV_SCRATCH/docs/implementation/PENDING/add-notifications/goal.md"
+# The title deliberately carries shell metacharacters — see the inertness case.
+printf '# Subscribe $(id) `whoami` ${HOME}\n\nbody\n' \
+  > "$ENV_SCRATCH/docs/implementation/PENDING/add-notifications/task2.md"
+cat > "$ENV_SCRATCH/.stride_lite.md" <<ENVEOF
+## before_task
+
+\`\`\`bash
+printf '%s\n' "HOOK_NAME=\$HOOK_NAME" "AGENT_NAME=\$AGENT_NAME" "TASK_FILE=\$TASK_FILE" "TASK_NUMBER=\$TASK_NUMBER" "TASK_TITLE=\$TASK_TITLE" "GOAL_DIR=\$GOAL_DIR" "GOAL_FILE=\$GOAL_FILE" "GOAL_SLUG=\$GOAL_SLUG" "GOAL_TITLE=\$GOAL_TITLE" > "$ENV_PROBE"
+\`\`\`
+
+## after_goal
+
+\`\`\`bash
+printf '%s\n' "HOOK_NAME=\$HOOK_NAME" "TASK_NUMBER=\$TASK_NUMBER" "GOAL_SLUG=\$GOAL_SLUG" "GOAL_TITLE=\$GOAL_TITLE" > "$ENV_PROBE"
+\`\`\`
+ENVEOF
+
+TASKREL="docs/implementation/PENDING/add-notifications/task2.md"
+probe() { grep -m1 "^$1=" "$ENV_PROBE" 2>/dev/null | cut -d= -f2-; }
+
+# --- Case 27: every documented key reaches the executed command ---
+echo "Case 27: all nine exported keys reach the command"
+rm -f "$ENV_PROBE"
+run_hook_dir "$ENV_SCRATCH" pre \
+  "{\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"/p/.stride/lite-boundary\",\"content\":\"stride-lite-boundary:before_task:$TASKREL\"}}" >/dev/null 2>&1
+missing=""
+for k in HOOK_NAME AGENT_NAME TASK_FILE TASK_NUMBER TASK_TITLE GOAL_DIR GOAL_FILE GOAL_SLUG GOAL_TITLE; do
+  grep -q "^$k=" "$ENV_PROBE" 2>/dev/null || missing="$missing $k"
+done
+if [ -z "$missing" ] \
+  && [ "$(probe HOOK_NAME)" = "before_task" ] \
+  && [ "$(probe AGENT_NAME)" = "stride-copilot-lite" ] \
+  && [ "$(probe TASK_NUMBER)" = "2" ] \
+  && [ "$(probe GOAL_SLUG)" = "add-notifications" ] \
+  && [ "$(probe GOAL_TITLE)" = "Add real-time notifications" ]; then
+  ok "all nine keys exported; TASK_NUMBER=2, GOAL_SLUG and GOAL_TITLE derived"
+else
+  nope "exported key set incomplete or wrong" "missing='$missing' number='$(probe TASK_NUMBER)' slug='$(probe GOAL_SLUG)' goaltitle='$(probe GOAL_TITLE)'"
+fi
+
+# --- Case 28: a metacharacter-bearing title is inert ---
+# The title contains $(id), backticks and ${HOME}. It must arrive as literal
+# bytes: exported as an environment VALUE, never spliced into command text.
+echo "Case 28: shell metacharacters in a task title are inert"
+title=$(probe TASK_TITLE)
+if [ "$title" = 'Subscribe $(id) `whoami` ${HOME}' ]; then
+  ok "title reached the command verbatim; nothing expanded or executed"
+else
+  nope "title must arrive literal" "got='$title'"
+fi
+
+# --- Case 29: a marker with no task path → task keys empty, hook still fires ---
+echo "Case 29: marker without a task path → empty task keys, unchanged exit code"
+rm -f "$ENV_PROBE"
+out=$(run_hook_dir "$ENV_SCRATCH" pre '{"tool_name":"Write","tool_input":{"file_path":"/p/.stride/lite-boundary","content":"stride-lite-boundary:before_task"}}' 2>/dev/null)
+rc=$?
+if [ "$rc" -eq 0 ] && echo "$out" | grep -q '"status":"success"' \
+  && [ -z "$(probe TASK_FILE)" ] && [ -z "$(probe TASK_NUMBER)" ] && [ -z "$(probe TASK_TITLE)" ] \
+  && grep -q '^TASK_FILE=' "$ENV_PROBE" 2>/dev/null; then
+  ok "undeterminable keys export as defined-but-empty; hook fires, exit 0"
+else
+  ok_detail="rc=$rc file='$(probe TASK_FILE)' number='$(probe TASK_NUMBER)'"
+  nope "missing task path must degrade, not fail" "$ok_detail"
+fi
+
+# --- Case 30: a path escaping the project directory is rejected ---
+echo "Case 30: task path outside the project directory is rejected"
+rm -f "$ENV_PROBE"
+run_hook_dir "$ENV_SCRATCH" pre \
+  '{"tool_name":"Write","tool_input":{"file_path":"/p/.stride/lite-boundary","content":"stride-lite-boundary:before_task:../../../../../../etc/passwd"}}' >/dev/null 2>&1
+if [ -z "$(probe TASK_FILE)" ] && [ -z "$(probe TASK_TITLE)" ]; then
+  ok "traversal path rejected → TASK_FILE and TASK_TITLE empty"
+else
+  nope "path outside the project must be rejected" "file='$(probe TASK_FILE)'"
+fi
+
+# --- Case 31: after_goal derives goal context and no task context ---
+echo "Case 31: after_goal exports goal keys and empty task keys"
+rm -f "$ENV_PROBE"
+run_hook_dir "$ENV_SCRATCH" post \
+  '{"tool_name":"Edit","tool_input":{"file_path":"docs/implementation/PENDING/add-notifications/goal.md","new_string":"## Completion Summary"}}' >/dev/null 2>&1
+if [ "$(probe HOOK_NAME)" = "after_goal" ] \
+  && [ "$(probe GOAL_SLUG)" = "add-notifications" ] \
+  && [ "$(probe GOAL_TITLE)" = "Add real-time notifications" ] \
+  && [ -z "$(probe TASK_NUMBER)" ]; then
+  ok "after_goal → goal keys derived, task keys empty"
+else
+  nope "after_goal goal-context derivation" "hook='$(probe HOOK_NAME)' slug='$(probe GOAL_SLUG)' number='$(probe TASK_NUMBER)'"
+fi
+
+# --- Case 32: the failure JSON key set is unchanged (no env leakage) ---
+# A user's hook may reference secrets, so no derived value may appear in the
+# result JSON. Its key set must be exactly what it was before env injection.
+echo "Case 32: failure JSON carries no exported environment values"
+ENVFAIL_SCRATCH=$(mktemp -d)
+mkdir -p "$ENVFAIL_SCRATCH/g"
+printf '# Secret Goal Title\n' > "$ENVFAIL_SCRATCH/g/goal.md"
+printf '# Secret Task Title\n' > "$ENVFAIL_SCRATCH/g/task2.md"
+printf '## before_task\n\n```bash\nfalse\n```\n' > "$ENVFAIL_SCRATCH/.stride_lite.md"
+out=$(run_hook_dir "$ENVFAIL_SCRATCH" pre '{"tool_name":"Write","tool_input":{"file_path":"/p/.stride/lite-boundary","content":"stride-lite-boundary:before_task:g/task2.md"}}')
+rm -rf "$ENVFAIL_SCRATCH"
+if echo "$out" | grep -q '"status":"failed"' \
+  && ! echo "$out" | grep -q 'Secret Task Title' \
+  && ! echo "$out" | grep -q 'Secret Goal Title' \
+  && ! echo "$out" | grep -q 'TASK_TITLE' \
+  && ! echo "$out" | grep -q 'GOAL_SLUG'; then
+  ok "failure JSON contains no derived env values"
+else
+  nope "failure JSON must not carry env values" "stdout='$out'"
+fi
+
+# --- Case 33: cross-executor parity — both export the identical key set/values ---
+# The parity contract is normative and this is the assertion that enforces it for
+# the exported environment: the same payload through the .sh and the .ps1 must
+# produce byte-identical probe output. Skipped, not failed, where pwsh is absent
+# (the plugin's own CI is the place that has both).
+echo "Case 33: .sh and .ps1 export an identical key set and values"
+if command -v pwsh > /dev/null 2>&1; then
+  PARITY_PAYLOAD="{\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"/p/.stride/lite-boundary\",\"content\":\"stride-lite-boundary:before_task:$TASKREL\"}}"
+  rm -f "$ENV_PROBE"
+  printf '%s' "$PARITY_PAYLOAD" | CLAUDE_PROJECT_DIR="$ENV_SCRATCH" "$HOOK_SCRIPT" pre >/dev/null 2>&1
+  sh_probe=$(cat "$ENV_PROBE" 2>/dev/null)
+  rm -f "$ENV_PROBE" "$ENV_SCRATCH/.stride/lite-boundary-fired"
+  printf '%s' "$PARITY_PAYLOAD" | CLAUDE_PROJECT_DIR="$ENV_SCRATCH" \
+    pwsh -NoProfile -File "$SCRIPT_DIR/stride-copilot-lite-hook.ps1" pre >/dev/null 2>&1
+  ps_probe=$(cat "$ENV_PROBE" 2>/dev/null)
+  if [ -n "$sh_probe" ] && [ "$sh_probe" = "$ps_probe" ]; then
+    ok "both executors exported byte-identical values for the same payload"
+  else
+    nope "executors diverged on the exported environment" "sh='$sh_probe' ps1='$ps_probe'"
+  fi
+else
+  ok "cross-executor parity SKIPPED — pwsh not installed on this machine"
+fi
+
+rm -rf "$ENV_SCRATCH"
+
 # --- Summary ---
 echo ""
 echo "------------------------------------------------------------------"

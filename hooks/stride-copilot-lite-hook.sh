@@ -162,6 +162,115 @@ _json_array_from_lines() {
   printf ']'
 }
 
+# --- Hook context derivation (W2022) ---
+# Every value comes from the goal/task markdown and their paths, never from a
+# server. The exported set therefore deliberately OMITS stride's BOARD_ID /
+# COLUMN_NAME / TASK_STATUS: this plugin has no board, column or status, and
+# exporting them empty would teach a contract that does not exist here.
+#
+# Keys are always exported, empty when underivable (stride's defined-but-empty
+# rule), so a `set -u` inside a user's command never aborts on a missing one.
+# No derivation failure changes the hook's exit code, and nothing is persisted
+# to disk — the values live only in the child command's environment.
+HOOK_TASK_FILE=""
+HOOK_TASK_NUMBER=""
+HOOK_TASK_TITLE=""
+HOOK_GOAL_DIR=""
+HOOK_GOAL_FILE=""
+HOOK_GOAL_SLUG=""
+HOOK_GOAL_TITLE=""
+
+# A path taken from a hook payload is untrusted input. Resolve it and confirm it
+# sits under the project directory before reading it, so a crafted marker body
+# cannot point the derivation at an arbitrary file. Prints the resolved path on
+# success; returns non-zero (and prints nothing) on rejection.
+_path_within_project() {
+  local _p="$1" _proj _abs _dir _base
+  [ -n "$_p" ] || return 1
+  _proj=$(cd "$PROJECT_DIR" 2>/dev/null && pwd -P) || return 1
+  case "$_p" in
+    /*) _abs="$_p" ;;
+    *)  _abs="$_proj/$_p" ;;
+  esac
+  # Resolve the parent rather than the leaf so a not-yet-existing file still
+  # validates — and so `..` segments are collapsed before the prefix test.
+  _dir=$(dirname "$_abs")
+  _base=$(basename "$_abs")
+  _dir=$(cd "$_dir" 2>/dev/null && pwd -P) || return 1
+  _abs="$_dir/$_base"
+  case "$_abs" in
+    "$_proj"/*) printf '%s' "$_abs"; return 0 ;;
+  esac
+  return 1
+}
+
+# First `# ` heading of a markdown file. Empty when the file is missing,
+# unreadable, or carries no such heading — never a hard failure, matching the
+# existing missing-file no-op discipline.
+_md_title() {
+  local _f="$1" _line
+  { [ -n "$_f" ] && [ -f "$_f" ] && [ -r "$_f" ]; } || { printf ''; return 0; }
+  while IFS= read -r _line || [ -n "$_line" ]; do
+    case "$_line" in
+      '# '*)
+        _line="${_line#\# }"
+        # Trim trailing whitespace/CR so a CRLF file does not leak a \r.
+        _line="${_line%"${_line##*[![:space:]]}"}"
+        printf '%s' "$_line"
+        return 0
+        ;;
+    esac
+  done < "$_f"
+  printf ''
+}
+
+# Derive the exportable context from whatever paths the trigger supplied.
+# Either argument may be empty: the Agent route carries no path at all, and a
+# marker written without one degrades to empty task variables.
+_derive_hook_context() {
+  local _task_path="$1" _goal_path="$2" _resolved _base
+  if [ -n "$_task_path" ] && _resolved=$(_path_within_project "$_task_path"); then
+    HOOK_TASK_FILE="$_resolved"
+    _base=$(basename "$_resolved")
+    case "$_base" in
+      task*.md)
+        _base="${_base#task}"
+        _base="${_base%.md}"
+        case "$_base" in
+          ''|*[!0-9]*) ;;            # not a plain taskN.md — leave the number empty
+          *) HOOK_TASK_NUMBER="$_base" ;;
+        esac
+        ;;
+    esac
+    HOOK_TASK_TITLE=$(_md_title "$HOOK_TASK_FILE")
+    HOOK_GOAL_DIR=$(dirname "$HOOK_TASK_FILE")
+  fi
+  if [ -n "$_goal_path" ] && _resolved=$(_path_within_project "$_goal_path"); then
+    HOOK_GOAL_FILE="$_resolved"
+    HOOK_GOAL_DIR=$(dirname "$_resolved")
+  fi
+  if [ -n "$HOOK_GOAL_DIR" ]; then
+    HOOK_GOAL_SLUG=$(basename "$HOOK_GOAL_DIR")
+    [ -n "$HOOK_GOAL_FILE" ] || HOOK_GOAL_FILE="$HOOK_GOAL_DIR/goal.md"
+    HOOK_GOAL_TITLE=$(_md_title "$HOOK_GOAL_FILE")
+  fi
+}
+
+# Pull the optional task-file path off a marker body of the documented form
+# `stride-lite-boundary:<boundary>:<task-file>`. Empty when the marker carries
+# only the boundary token, which is a valid marker.
+_marker_task_path() {
+  local _body="$1" _prefix="stride-lite-boundary:$2:" _v
+  case "$_body" in
+    "$_prefix"*)
+      _v="${_body#"$_prefix"}"
+      _v="${_v%%\\n*}"   # stop at an encoded newline if the body carried one
+      printf '%s' "$_v"
+      ;;
+    *) printf '' ;;
+  esac
+}
+
 # --- Boundary fired-record (marker route ↔ Agent route de-duplication) ---
 # Claude Code emits BOTH the marker write and the Agent dispatch for one boundary.
 # The marker route fires first and records which boundary it handled; the Agent
@@ -236,6 +345,23 @@ run_stride_lite_section() {
   fi
 
   cd "$PROJECT_DIR"
+
+  # Export the derived context into the environment of every command below.
+  # These are ENVIRONMENT VALUES, never spliced into the command text, so a task
+  # title containing $(...) or backticks reaches the command as literal bytes and
+  # executes nothing. Every key is exported even when empty. Nothing here is
+  # written to disk, and none of it is added to the result JSON — a user's hook
+  # may reference secrets, and the failure JSON already tails stdout/stderr.
+  export HOOK_NAME="$_section"
+  export AGENT_NAME="stride-copilot-lite"
+  export TASK_FILE="$HOOK_TASK_FILE"
+  export TASK_NUMBER="$HOOK_TASK_NUMBER"
+  export TASK_TITLE="$HOOK_TASK_TITLE"
+  export GOAL_DIR="$HOOK_GOAL_DIR"
+  export GOAL_FILE="$HOOK_GOAL_FILE"
+  export GOAL_SLUG="$HOOK_GOAL_SLUG"
+  export GOAL_TITLE="$HOOK_GOAL_TITLE"
+
   local _completed_file
   _completed_file=$(mktemp)
   local _start_secs
@@ -380,6 +506,14 @@ case "$PHASE" in
               elif printf '%s' "$INPUT" | grep -q 'stride-lite-boundary:after_task'; then
                 HOOK_NAME="after_task";  BLOCKING=1; MARKER_ROUTE=1
               fi
+              if [ -n "$HOOK_NAME" ]; then
+                # The marker body may carry the active task file after the
+                # boundary token. It is optional — a marker without one still
+                # routes, and simply yields empty task variables.
+                MARKER_BODY=$(_extract_string_any "content" "$INPUT" "$INPUT_UNESC")
+                [ -n "$MARKER_BODY" ] || MARKER_BODY=$(_extract_string_any "new_string" "$INPUT" "$INPUT_UNESC")
+                _derive_hook_context "$(_marker_task_path "$MARKER_BODY" "$HOOK_NAME")" ""
+              fi
               ;;
           esac
           ;;
@@ -400,6 +534,9 @@ case "$PHASE" in
             if printf '%s' "$INPUT" | grep -q '## Completion Summary'; then
               HOOK_NAME="after_goal"
               BLOCKING=0
+              # The goal.md path is the payload's own file_path, so after_goal
+              # derives goal context directly; there is no active task here.
+              _derive_hook_context "" "$FILE_PATH"
             fi
             ;;
         esac

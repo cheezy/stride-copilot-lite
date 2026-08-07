@@ -69,11 +69,13 @@ If every `taskN.md` in the goal directory already has a `## Completion Summary` 
 
 ### Step 2 — Execute the `## before_task` hook
 
-**Write the boundary marker.** Write the file `.stride/lite-boundary` in the project root with this exact single-line content:
+**Write the boundary marker.** Write the file `.stride/lite-boundary` in the project root with this exact single-line content, appending the active task file's path:
 
 ```
-stride-lite-boundary:before_task
+stride-lite-boundary:before_task:<path to the active taskN.md>
 ```
+
+for example `stride-lite-boundary:before_task:docs/implementation/PENDING/add-notifications/task2.md`. The trailing path is what lets the harness export `TASK_FILE`, `TASK_NUMBER`, `TASK_TITLE`, `GOAL_DIR`, `GOAL_FILE`, `GOAL_SLUG` and `GOAL_TITLE` into the user's hook commands (see "Hook execution contract"). Omitting it still fires the hook — those variables simply arrive empty — so never skip the marker write because you cannot resolve a path.
 
 That write is what fires the hook. `hooks/hooks.json` registers a **PreToolUse** hook on the write tools, and `hooks/stride-copilot-lite-hook.sh` routes it to the `## before_task` section of `.stride_lite.md` when — and only when — the path is exactly `.stride/lite-boundary` **and** the body carries that exact token. Writing the marker is mandatory: it is the only boundary signal GitHub Copilot CLI actually emits, because Copilot has no skill/agent dispatch event to intercept (see `AGENTS.md` → "Hook intercept design"). Under Claude Code the same write fires the same hook, and the subsequent Step 3 dispatch stands down rather than firing it a second time.
 
@@ -102,7 +104,7 @@ Follow the acceptance criteria as your definition of done. Replicate the pattern
 Same boundary-marker pattern as Step 2. Write `.stride/lite-boundary` again, this time with:
 
 ```
-stride-lite-boundary:after_task
+stride-lite-boundary:after_task:<path to the active taskN.md>
 ```
 
 The harness routes that write to the `## after_task` section. Same blocking semantics — a failing command blocks the write and stops the workflow on both runtimes (`exit 2` plus `permissionDecision: deny`), so do not proceed to Step 6 and do not retry the write to get past it.
@@ -214,7 +216,29 @@ For each trigger, the hook executor:
 3. Executes each non-empty, non-comment line one at a time. On the first non-zero exit it stops and emits a structured failure JSON on stdout (`hook`, `status: "failed"`, `failed_command`, `command_index`, `exit_code`, `stdout`, `stderr`, `commands_completed`, `commands_remaining`); on all-success it emits a structured success JSON (`hook`, `status: "success"`, `commands_completed`, `duration_seconds`).
 4. Missing `.stride_lite.md`, missing section, or empty fenced block all degrade to a clean no-op (exit 0, no JSON).
 
-The hook environment is the same shell environment the Copilot harness runs in — no special env-var injection beyond what the user's command lines reference. (This differs from the full Stride plugin which injects `TASK_*` / `GOAL_*` env vars; stride-copilot-lite hooks rely on the user writing self-contained commands.)
+### Exported variables
+
+Before running a section's commands, the executor exports this set into their environment. Every value is derived from the goal and task markdown and their paths — there is no server involved.
+
+| Variable | Value | Present in |
+|---|---|---|
+| `HOOK_NAME` | The section being run: `before_task`, `after_task` or `after_goal` | all three |
+| `AGENT_NAME` | Always `stride-copilot-lite` | all three |
+| `TASK_FILE` | Absolute path to the active `taskN.md` | `before_task`, `after_task` |
+| `TASK_NUMBER` | The `N` from `taskN.md` | `before_task`, `after_task` |
+| `TASK_TITLE` | The task file's first `# ` heading | `before_task`, `after_task` |
+| `GOAL_DIR` | Absolute path to the goal directory | all three |
+| `GOAL_FILE` | Absolute path to `goal.md` | all three |
+| `GOAL_SLUG` | Basename of the goal directory | all three |
+| `GOAL_TITLE` | `goal.md`'s first `# ` heading | all three |
+
+Three rules govern the set:
+
+- **Every key is always exported, empty when it cannot be derived.** A marker written without a task path, an `Agent`-route firing (which carries no path at all), a missing task file, or a file with no `# ` heading all yield an empty string rather than an error. No derivation failure changes the hook's exit code, and a `set -u` inside a user's command never aborts on a missing key.
+- **Values are environment values, never command text.** A task title containing `$(id)` or backticks reaches the command as literal bytes and executes nothing.
+- **The set is deliberately smaller than the full Stride plugin's.** There is no `BOARD_ID`, `COLUMN_NAME` or `TASK_STATUS`, because this plugin has no board, column or status — exporting them empty would teach a contract that does not exist here. A `.stride_lite.md` moved over from the Claude Code plugin keeps working; only the board-shaped variables are unavailable.
+
+Nothing derived is written to disk, and no value appears in the result JSON — a user's hook may reference secrets, and the failure JSON already tails stdout and stderr.
 
 ## Bash scope
 
