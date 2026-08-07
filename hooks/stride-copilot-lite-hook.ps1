@@ -12,7 +12,7 @@ param(
 # `## before_task` / `## after_task` / `## after_goal` section from .stride_lite.md.
 #
 # Trigger conditions (identical to stride-copilot-lite-hook.sh):
-#   pre  + (Edit|edit|Write|create) + file_path ~ */.stride/lite-boundary + body contains
+#   pre  + (Edit|edit|Write|create) + file_path ~ */.stride-copilot-lite/lite-boundary + body contains
 #                             "stride-lite-boundary:before_task" → before_task (blocking)
 #                             "stride-lite-boundary:after_task"  → after_task  (blocking)
 #   pre  + Agent + subagent_type == "stride-copilot-lite:task-explorer" → before_task  (blocking)
@@ -29,7 +29,7 @@ param(
 #
 # The Agent route is retained unchanged for Claude Code. To keep each boundary firing exactly
 # once on a runtime that emits both events, the marker route records the boundary it fired in
-# .stride/lite-boundary-fired and the Agent route consumes that record instead of re-firing.
+# .stride-copilot-lite/lite-boundary-fired and the Agent route consumes that record instead of re-firing.
 #
 # Harness compatibility: handles both Claude Code (PascalCase tool_name; tool_input as
 # object) and GitHub Copilot CLI (camelCase toolName; toolArgs as JSON-encoded string).
@@ -57,9 +57,50 @@ $ErrorActionPreference = 'Stop'
 $ProjectDir = if ($env:CLAUDE_PROJECT_DIR) { $env:CLAUDE_PROJECT_DIR } else { '.' }
 $StrideLiteMd = Join-Path $ProjectDir '.stride_lite.md'
 
-# Boundary-marker route (W2021). Transient session state under .stride/, which the
-# plugin's .gitignore already excludes.
-$BoundaryFiredFile = Join-Path (Join-Path $ProjectDir '.stride') 'lite-boundary-fired'
+# Boundary-marker route (W2021). Transient session state under .stride-copilot-lite/,
+# a plugin-owned directory — never .stride/ or .stride-lite/, which belong to the sibling
+# plugins a project may have installed alongside this one.
+$BoundaryFiredFile = Join-Path (Join-Path $ProjectDir '.stride-copilot-lite') 'lite-boundary-fired'
+
+# --- Orchestrator activation gate (W2023) ---
+# Hook firing is a property of a WORKFLOW RUN, not of whichever tool call matched.
+# The workflow skill writes this marker before its first task boundary and clears it
+# on every exit path; without a fresh one, a matching payload runs nothing, exits 0
+# and never blocks the tool call.
+#
+# NOT A SECURITY BOUNDARY. Any local process can write this file. It coordinates the
+# workflow skill with the hook executor; nothing may lean on it for authorization.
+$OrchestratorMarker = Join-Path (Join-Path $ProjectDir '.stride-copilot-lite') '.orchestrator_active'
+$OrchestratorMaxAgeSeconds = 14400   # 4 hours, mirroring the full Stride plugin
+
+function Test-OrchestratorActive {
+    # Debugging and CI escape hatch. Never set from any shipped file.
+    if ($env:STRIDE_COPILOT_LITE_ALLOW_DIRECT -eq '1') { return $true }
+    if (-not (Test-Path -LiteralPath $OrchestratorMarker -PathType Leaf)) { return $false }
+    try {
+        $content = Get-Content -LiteralPath $OrchestratorMarker -Raw -Encoding UTF8
+        $then = $null
+        # Freshness from started_at when it parses, else the file's mtime. A crashed
+        # run leaves a marker behind, so an existing marker is never trusted alone.
+        if ($content -match '"started_at"\s*:\s*"([^"]+)"') {
+            $parsed = [datetime]::MinValue
+            if ([datetime]::TryParse($Matches[1], [cultureinfo]::InvariantCulture,
+                    [System.Globalization.DateTimeStyles]::AdjustToUniversal -bor
+                    [System.Globalization.DateTimeStyles]::AssumeUniversal, [ref]$parsed)) {
+                $then = $parsed
+            }
+        }
+        if (-not $then) {
+            $then = (Get-Item -LiteralPath $OrchestratorMarker).LastWriteTimeUtc
+        }
+        $now = [datetime]::UtcNow
+        # A marker dated in the future is as untrustworthy as a stale one.
+        if ($then -gt $now) { return $false }
+        return (($now - $then).TotalSeconds -le $OrchestratorMaxAgeSeconds)
+    } catch {
+        return $false
+    }
+}
 
 # --- Hook context derivation (W2022) ---
 # Same key set, same empty-string rule and same no-interpolation guarantee as the
@@ -280,7 +321,7 @@ switch ($Phase) {
             # Runtime-native boundary intercept: the workflow skill's write of the
             # boundary marker. Requires BOTH the exact plugin-owned path AND an exact
             # boundary token in the written body — either alone routes to nothing.
-            if ($FilePath -match '(^|[/\\])\.stride[/\\]lite-boundary$') {
+            if ($FilePath -match '(^|[/\\])\.stride-copilot-lite[/\\]lite-boundary$') {
                 if ($InputJson -match 'stride-lite-boundary:before_task') {
                     $HookName = 'before_task'; $Blocking = $true; $MarkerRoute = $true
                 }
@@ -311,6 +352,10 @@ switch ($Phase) {
 }
 
 if (-not $HookName) { exit 0 }
+
+# The gate sits AFTER trigger detection so a non-trigger payload costs nothing.
+# Standing down runs no section and exits 0 — it must never block the tool call.
+if (-not (Test-OrchestratorActive)) { exit 0 }
 
 # --- Parse and execute one .stride_lite.md hook section ---
 # Returns:

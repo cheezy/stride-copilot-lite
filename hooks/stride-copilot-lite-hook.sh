@@ -7,7 +7,7 @@
 # `## before_task` / `## after_task` / `## after_goal` section from .stride_lite.md.
 #
 # Trigger conditions:
-#   pre  + (Edit|edit|Write|create) + file_path ~ */.stride/lite-boundary + body contains
+#   pre  + (Edit|edit|Write|create) + file_path ~ */.stride-copilot-lite/lite-boundary + body contains
 #                             "stride-lite-boundary:before_task" → before_task (blocking)
 #                             "stride-lite-boundary:after_task"  → after_task  (blocking)
 #   pre  + Agent + subagent_type == "stride-copilot-lite:task-explorer" → before_task  (blocking)
@@ -24,7 +24,7 @@
 #
 # The Agent route is retained unchanged for Claude Code. To keep each boundary firing exactly
 # once on a runtime that emits both events, the marker route records the boundary it fired in
-# .stride/lite-boundary-fired and the Agent route consumes that record instead of re-firing.
+# .stride-copilot-lite/lite-boundary-fired and the Agent route consumes that record instead of re-firing.
 # A pre-W2021 workflow skill writes no marker, leaves no record, and so still fires via Agent.
 #
 # Harness compatibility:
@@ -57,9 +57,10 @@ PROJECT_DIR="${CLAUDE_PROJECT_DIR:-.}"
 STRIDE_LITE_MD="$PROJECT_DIR/.stride_lite.md"
 
 # Boundary-marker route (W2021). The marker path is plugin-owned and fixed; the
-# fired-record is transient session state. Both live under .stride/, which the
-# plugin's .gitignore already excludes.
-BOUNDARY_FIRED_FILE="$PROJECT_DIR/.stride/lite-boundary-fired"
+# fired-record is transient session state. Both live under .stride-copilot-lite/,
+# a plugin-owned directory — never .stride/ or .stride-lite/, which belong to the
+# sibling plugins a project may have installed alongside this one.
+BOUNDARY_FIRED_FILE="$PROJECT_DIR/.stride-copilot-lite/lite-boundary-fired"
 
 # --- Platform detection: delegate to PowerShell on native Windows ---
 # Git Bash (OSTYPE=msys*) and WSL have full bash — run directly.
@@ -160,6 +161,63 @@ _json_array_from_lines() {
     printf '"%s"' "$(_json_escape "$line")"
   done
   printf ']'
+}
+
+# --- Orchestrator activation gate (W2023) ---
+# Hook firing is a property of a WORKFLOW RUN, not of whichever tool call
+# happened to match. The workflow skill writes this marker before its first task
+# boundary and clears it on every exit path; without a fresh one, a matching
+# payload runs nothing and exits 0.
+#
+# This became necessary the moment W2021 adopted a runtime-native intercept: any
+# event Copilot actually emits is broader than a subagent dispatch, so without
+# the gate an ordinary edit could run a user's `git pull` or test suite outside
+# any workflow.
+#
+# NOT A SECURITY BOUNDARY. Any local process can write this file. It is a
+# coordination mechanism between the workflow skill and the hook executor, and
+# nothing may ever lean on it for authorization.
+ORCHESTRATOR_MARKER="$PROJECT_DIR/.stride-copilot-lite/.orchestrator_active"
+ORCHESTRATOR_MAX_AGE_SECONDS=14400   # 4 hours, mirroring the full Stride plugin
+
+# Seconds since epoch for an ISO-8601 UTC timestamp, GNU and BSD date both.
+_epoch_from_iso8601() {
+  local _s="$1" _e
+  _e=$(date -u -d "$_s" +%s 2>/dev/null) && [ -n "$_e" ] && { printf '%s' "$_e"; return 0; }
+  _e=$(date -u -j -f "%Y-%m-%dT%H:%M:%SZ" "$_s" +%s 2>/dev/null) && [ -n "$_e" ] && { printf '%s' "$_e"; return 0; }
+  return 1
+}
+
+_file_mtime_epoch() {
+  local _f="$1" _m
+  _m=$(stat -f %m "$_f" 2>/dev/null) && [ -n "$_m" ] && { printf '%s' "$_m"; return 0; }
+  _m=$(stat -c %Y "$_f" 2>/dev/null) && [ -n "$_m" ] && { printf '%s' "$_m"; return 0; }
+  return 1
+}
+
+# 0 when a workflow run is active; non-zero when the hook must stand down.
+_orchestrator_active() {
+  # Debugging and CI escape hatch. Never set from any shipped file.
+  [ "${STRIDE_COPILOT_LITE_ALLOW_DIRECT:-}" = "1" ] && return 0
+
+  [ -f "$ORCHESTRATOR_MARKER" ] || return 1
+
+  local _content _started _then _now
+  _content=$(cat "$ORCHESTRATOR_MARKER" 2>/dev/null) || return 1
+
+  # Freshness from started_at when it parses, else the file's mtime. A crashed
+  # run leaves a marker behind, so an existing marker is never trusted on its own.
+  _started=$(_extract_string "started_at" "$_content")
+  if [ -n "$_started" ]; then
+    _then=$(_epoch_from_iso8601 "$_started") || _then=""
+  fi
+  [ -n "${_then:-}" ] || _then=$(_file_mtime_epoch "$ORCHESTRATOR_MARKER") || return 1
+
+  _now=$(date -u +%s 2>/dev/null) || return 1
+  # A marker dated in the future is as untrustworthy as a stale one.
+  [ "$_then" -le "$_now" ] 2>/dev/null || return 1
+  [ $((_now - _then)) -le "$ORCHESTRATOR_MAX_AGE_SECONDS" ] || return 1
+  return 0
 }
 
 # --- Hook context derivation (W2022) ---
@@ -500,7 +558,7 @@ case "$PHASE" in
           # Normalize Windows separators so one pattern serves both platforms.
           FILE_PATH="${FILE_PATH//\\//}"
           case "$FILE_PATH" in
-            */.stride/lite-boundary|.stride/lite-boundary)
+            */.stride-copilot-lite/lite-boundary|.stride-copilot-lite/lite-boundary)
               if printf '%s' "$INPUT" | grep -q 'stride-lite-boundary:before_task'; then
                 HOOK_NAME="before_task"; BLOCKING=1; MARKER_ROUTE=1
               elif printf '%s' "$INPUT" | grep -q 'stride-lite-boundary:after_task'; then
@@ -546,6 +604,14 @@ case "$PHASE" in
 esac
 
 if [ -z "$HOOK_NAME" ]; then
+  exit 0
+fi
+
+# The gate sits AFTER trigger detection so a non-trigger payload — the vast
+# majority of tool calls under the widened matcher — costs nothing extra.
+# Standing down runs no section and exits 0: it must never BLOCK the tool call,
+# or ordinary editing outside a workflow would start failing.
+if ! _orchestrator_active; then
   exit 0
 fi
 

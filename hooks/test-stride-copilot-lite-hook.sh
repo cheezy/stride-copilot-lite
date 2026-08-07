@@ -43,6 +43,17 @@ SCRATCH=$(mktemp -d)
 FAIL_SCRATCH=$(mktemp -d)
 trap 'rm -rf "$SCRATCH" "$FAIL_SCRATCH"' EXIT
 
+# Every case below simulates a tool call made INSIDE a workflow run, so each
+# scratch project needs a fresh orchestrator marker (W2023). Without one the hook
+# correctly stands down — which is what the dedicated gate cases assert.
+write_marker() {
+  mkdir -p "$1/.stride-copilot-lite"
+  printf '{"session_id":"harness","started_at":"%s","pid":%d}\n' \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$$" > "$1/.stride-copilot-lite/.orchestrator_active"
+}
+write_marker "$SCRATCH"
+write_marker "$FAIL_SCRATCH"
+
 cat > "$SCRATCH/.stride_lite.md" <<'EOF'
 ## before_task
 
@@ -237,13 +248,13 @@ fi
 # after_task intercept that replaces the dependence on an Agent event.
 # ==================================================================
 
-# The marker route writes .stride/lite-boundary-fired so Claude Code's Agent
+# The marker route writes .stride-copilot-lite/lite-boundary-fired so Claude Code's Agent
 # dispatch can stand down. Clear it between cases that don't test that handshake.
-clear_fired() { rm -f "$1/.stride/lite-boundary-fired" 2>/dev/null; }
+clear_fired() { rm -f "$1/.stride-copilot-lite/lite-boundary-fired" 2>/dev/null; }
 
-MARKER_CC='{"tool_name":"Write","tool_input":{"file_path":"/p/.stride/lite-boundary","content":"stride-lite-boundary:before_task"}}'
-MARKER_COP_BEFORE='{"toolName":"create","toolArgs":"{\"file_path\":\"/p/.stride/lite-boundary\",\"content\":\"stride-lite-boundary:before_task\"}"}'
-MARKER_COP_AFTER='{"toolName":"edit","toolArgs":"{\"file_path\":\".stride/lite-boundary\",\"content\":\"stride-lite-boundary:after_task\"}"}'
+MARKER_CC='{"tool_name":"Write","tool_input":{"file_path":"/p/.stride-copilot-lite/lite-boundary","content":"stride-lite-boundary:before_task"}}'
+MARKER_COP_BEFORE='{"toolName":"create","toolArgs":"{\"file_path\":\"/p/.stride-copilot-lite/lite-boundary\",\"content\":\"stride-lite-boundary:before_task\"}"}'
+MARKER_COP_AFTER='{"toolName":"edit","toolArgs":"{\"file_path\":\".stride-copilot-lite/lite-boundary\",\"content\":\"stride-lite-boundary:after_task\"}"}'
 
 # --- Case 14: Copilot CLI marker write → before_task ---
 echo "Case 14: Copilot CLI boundary marker triggers before_task"
@@ -278,7 +289,7 @@ fi
 # --- Case 17: NEAR-MISS — marker path, no boundary token → no-op ---
 echo "Case 17: NEAR-MISS marker path without a boundary token → no-op"
 clear_fired "$SCRATCH"
-out=$(run_hook pre '{"toolName":"create","toolArgs":"{\"file_path\":\"/p/.stride/lite-boundary\",\"content\":\"just some text\"}"}')
+out=$(run_hook pre '{"toolName":"create","toolArgs":"{\"file_path\":\"/p/.stride-copilot-lite/lite-boundary\",\"content\":\"just some text\"}"}')
 if [ -z "$out" ]; then
   ok "marker path + no token → no-op (no stdout)"
 else
@@ -324,6 +335,7 @@ fi
 echo "Case 21: marker write + Agent dispatch → before_task fires exactly once"
 DEDUPE_SCRATCH=$(mktemp -d)
 cp "$SCRATCH/.stride_lite.md" "$DEDUPE_SCRATCH/.stride_lite.md"
+write_marker "$DEDUPE_SCRATCH"
 first=$(run_hook_dir "$DEDUPE_SCRATCH" pre "$MARKER_CC")
 second=$(run_hook_dir "$DEDUPE_SCRATCH" pre '{"tool_name":"Agent","tool_input":{"subagent_type":"stride-copilot-lite:task-explorer"}}')
 if echo "$first" | grep -q '"hook":"before_task"' && [ -z "$second" ]; then
@@ -391,11 +403,12 @@ fi
 echo "Case 26: full workflow pass → before_task, after_task, after_goal once each, in order"
 SEQ_SCRATCH=$(mktemp -d)
 cp "$SCRATCH/.stride_lite.md" "$SEQ_SCRATCH/.stride_lite.md"
+write_marker "$SEQ_SCRATCH"
 seq_log=""
 capture() { seq_log="${seq_log}$(run_hook_dir "$SEQ_SCRATCH" "$1" "$2" | grep -o '"hook":"[a-z_]*"')"$'\n'; }
 capture pre  "$MARKER_CC"                                                                              # Step 2 marker
 capture pre  '{"tool_name":"Agent","tool_input":{"subagent_type":"stride-copilot-lite:task-explorer"}}' # Step 3 dispatch
-capture pre  '{"tool_name":"Write","tool_input":{"file_path":"/p/.stride/lite-boundary","content":"stride-lite-boundary:after_task"}}'
+capture pre  '{"tool_name":"Write","tool_input":{"file_path":"/p/.stride-copilot-lite/lite-boundary","content":"stride-lite-boundary:after_task"}}'
 capture pre  '{"tool_name":"Agent","tool_input":{"subagent_type":"stride-copilot-lite:task-reviewer"}}' # Step 6 dispatch
 capture post '{"tool_name":"Edit","tool_input":{"file_path":"g/goal.md","new_string":"## Completion Summary"}}'
 rm -rf "$SEQ_SCRATCH"
@@ -436,6 +449,7 @@ printf '%s\n' "HOOK_NAME=\$HOOK_NAME" "AGENT_NAME=\$AGENT_NAME" "TASK_FILE=\$TAS
 printf '%s\n' "HOOK_NAME=\$HOOK_NAME" "TASK_NUMBER=\$TASK_NUMBER" "GOAL_SLUG=\$GOAL_SLUG" "GOAL_TITLE=\$GOAL_TITLE" > "$ENV_PROBE"
 \`\`\`
 ENVEOF
+write_marker "$ENV_SCRATCH"
 
 TASKREL="docs/implementation/PENDING/add-notifications/task2.md"
 probe() { grep -m1 "^$1=" "$ENV_PROBE" 2>/dev/null | cut -d= -f2-; }
@@ -444,7 +458,7 @@ probe() { grep -m1 "^$1=" "$ENV_PROBE" 2>/dev/null | cut -d= -f2-; }
 echo "Case 27: all nine exported keys reach the command"
 rm -f "$ENV_PROBE"
 run_hook_dir "$ENV_SCRATCH" pre \
-  "{\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"/p/.stride/lite-boundary\",\"content\":\"stride-lite-boundary:before_task:$TASKREL\"}}" >/dev/null 2>&1
+  "{\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"/p/.stride-copilot-lite/lite-boundary\",\"content\":\"stride-lite-boundary:before_task:$TASKREL\"}}" >/dev/null 2>&1
 missing=""
 for k in HOOK_NAME AGENT_NAME TASK_FILE TASK_NUMBER TASK_TITLE GOAL_DIR GOAL_FILE GOAL_SLUG GOAL_TITLE; do
   grep -q "^$k=" "$ENV_PROBE" 2>/dev/null || missing="$missing $k"
@@ -474,7 +488,7 @@ fi
 # --- Case 29: a marker with no task path → task keys empty, hook still fires ---
 echo "Case 29: marker without a task path → empty task keys, unchanged exit code"
 rm -f "$ENV_PROBE"
-out=$(run_hook_dir "$ENV_SCRATCH" pre '{"tool_name":"Write","tool_input":{"file_path":"/p/.stride/lite-boundary","content":"stride-lite-boundary:before_task"}}' 2>/dev/null)
+out=$(run_hook_dir "$ENV_SCRATCH" pre '{"tool_name":"Write","tool_input":{"file_path":"/p/.stride-copilot-lite/lite-boundary","content":"stride-lite-boundary:before_task"}}' 2>/dev/null)
 rc=$?
 if [ "$rc" -eq 0 ] && echo "$out" | grep -q '"status":"success"' \
   && [ -z "$(probe TASK_FILE)" ] && [ -z "$(probe TASK_NUMBER)" ] && [ -z "$(probe TASK_TITLE)" ] \
@@ -489,7 +503,7 @@ fi
 echo "Case 30: task path outside the project directory is rejected"
 rm -f "$ENV_PROBE"
 run_hook_dir "$ENV_SCRATCH" pre \
-  '{"tool_name":"Write","tool_input":{"file_path":"/p/.stride/lite-boundary","content":"stride-lite-boundary:before_task:../../../../../../etc/passwd"}}' >/dev/null 2>&1
+  '{"tool_name":"Write","tool_input":{"file_path":"/p/.stride-copilot-lite/lite-boundary","content":"stride-lite-boundary:before_task:../../../../../../etc/passwd"}}' >/dev/null 2>&1
 if [ -z "$(probe TASK_FILE)" ] && [ -z "$(probe TASK_TITLE)" ]; then
   ok "traversal path rejected → TASK_FILE and TASK_TITLE empty"
 else
@@ -519,7 +533,8 @@ mkdir -p "$ENVFAIL_SCRATCH/g"
 printf '# Secret Goal Title\n' > "$ENVFAIL_SCRATCH/g/goal.md"
 printf '# Secret Task Title\n' > "$ENVFAIL_SCRATCH/g/task2.md"
 printf '## before_task\n\n```bash\nfalse\n```\n' > "$ENVFAIL_SCRATCH/.stride_lite.md"
-out=$(run_hook_dir "$ENVFAIL_SCRATCH" pre '{"tool_name":"Write","tool_input":{"file_path":"/p/.stride/lite-boundary","content":"stride-lite-boundary:before_task:g/task2.md"}}')
+write_marker "$ENVFAIL_SCRATCH"
+out=$(run_hook_dir "$ENVFAIL_SCRATCH" pre '{"tool_name":"Write","tool_input":{"file_path":"/p/.stride-copilot-lite/lite-boundary","content":"stride-lite-boundary:before_task:g/task2.md"}}')
 rm -rf "$ENVFAIL_SCRATCH"
 if echo "$out" | grep -q '"status":"failed"' \
   && ! echo "$out" | grep -q 'Secret Task Title' \
@@ -538,11 +553,11 @@ fi
 # (the plugin's own CI is the place that has both).
 echo "Case 33: .sh and .ps1 export an identical key set and values"
 if command -v pwsh > /dev/null 2>&1; then
-  PARITY_PAYLOAD="{\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"/p/.stride/lite-boundary\",\"content\":\"stride-lite-boundary:before_task:$TASKREL\"}}"
+  PARITY_PAYLOAD="{\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"/p/.stride-copilot-lite/lite-boundary\",\"content\":\"stride-lite-boundary:before_task:$TASKREL\"}}"
   rm -f "$ENV_PROBE"
   printf '%s' "$PARITY_PAYLOAD" | CLAUDE_PROJECT_DIR="$ENV_SCRATCH" "$HOOK_SCRIPT" pre >/dev/null 2>&1
   sh_probe=$(cat "$ENV_PROBE" 2>/dev/null)
-  rm -f "$ENV_PROBE" "$ENV_SCRATCH/.stride/lite-boundary-fired"
+  rm -f "$ENV_PROBE" "$ENV_SCRATCH/.stride-copilot-lite/lite-boundary-fired"
   printf '%s' "$PARITY_PAYLOAD" | CLAUDE_PROJECT_DIR="$ENV_SCRATCH" \
     pwsh -NoProfile -File "$SCRIPT_DIR/stride-copilot-lite-hook.ps1" pre >/dev/null 2>&1
   ps_probe=$(cat "$ENV_PROBE" 2>/dev/null)
@@ -556,6 +571,122 @@ else
 fi
 
 rm -rf "$ENV_SCRATCH"
+
+# ==================================================================
+# Orchestrator activation gate (W2023) — fresh / missing / stale /
+# override, for a blocking trigger and the advisory trigger.
+# ==================================================================
+
+GATE_SCRATCH=$(mktemp -d)
+printf '## before_task\n\n```bash\necho GATE_BEFORE\n```\n\n## after_goal\n\n```bash\necho GATE_AFTER_GOAL\n```\n' \
+  > "$GATE_SCRATCH/.stride_lite.md"
+GATE_MARKER="$GATE_SCRATCH/.stride-copilot-lite/.orchestrator_active"
+GATE_BLOCKING='{"tool_name":"Write","tool_input":{"file_path":"/p/.stride-copilot-lite/lite-boundary","content":"stride-lite-boundary:before_task"}}'
+GATE_ADVISORY='{"tool_name":"Edit","tool_input":{"file_path":"g/goal.md","new_string":"## Completion Summary"}}'
+
+# Write a marker whose started_at is N seconds in the past. The mtime is aged to
+# match so the mtime fallback cannot mask a started_at the gate should reject.
+write_marker_aged() {
+  local _dir="$1" _age="$2" _iso _stamp
+  mkdir -p "$_dir/.stride-copilot-lite"
+  if _iso=$(date -u -d "@$(( $(date -u +%s) - _age ))" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null); then :
+  else _iso=$(date -u -r $(( $(date -u +%s) - _age )) +%Y-%m-%dT%H:%M:%SZ 2>/dev/null); fi
+  printf '{"session_id":"harness","started_at":"%s","pid":1}\n' "$_iso" \
+    > "$_dir/.stride-copilot-lite/.orchestrator_active"
+  # touch -t interprets its stamp in LOCAL time, so format it in local time —
+  # a -u stamp would age the file by the timezone offset instead of by _age.
+  if _stamp=$(date -d "@$(( $(date -u +%s) - _age ))" +%Y%m%d%H%M.%S 2>/dev/null); then :
+  else _stamp=$(date -r $(( $(date -u +%s) - _age )) +%Y%m%d%H%M.%S 2>/dev/null); fi
+  [ -n "$_stamp" ] && touch -t "$_stamp" "$_dir/.stride-copilot-lite/.orchestrator_active" 2>/dev/null
+}
+
+# --- Case 34: fresh marker → the section runs exactly as before ---
+echo "Case 34: fresh marker → blocking trigger runs its section"
+write_marker_aged "$GATE_SCRATCH" 0
+out=$(run_hook_dir "$GATE_SCRATCH" pre "$GATE_BLOCKING")
+if echo "$out" | grep -q '"hook":"before_task"' && echo "$out" | grep -q '"status":"success"'; then
+  ok "fresh marker → before_task runs"
+else
+  nope "fresh marker must run the section" "stdout='$out'"
+fi
+
+# --- Case 35: no marker → blocking trigger runs nothing, exit 0, empty stdout ---
+# Critically it must NOT block: exit 2 here would make ordinary editing outside a
+# workflow start failing under the widened matcher.
+echo "Case 35: no marker → blocking trigger stands down, exit 0, empty stdout"
+rm -rf "$GATE_SCRATCH/.stride-copilot-lite"
+out=$(run_hook_dir "$GATE_SCRATCH" pre "$GATE_BLOCKING")
+rc=$?
+if [ "$rc" -eq 0 ] && [ -z "$out" ]; then
+  ok "missing marker → nothing runs, exit 0 (tool call not blocked)"
+else
+  nope "missing marker must stand down without blocking" "rc=$rc stdout='$out'"
+fi
+
+# --- Case 36: stale marker (older than 4h) → stands down ---
+echo "Case 36: marker older than 4 hours → stands down"
+write_marker_aged "$GATE_SCRATCH" 14500      # 4h + 100s
+out=$(run_hook_dir "$GATE_SCRATCH" pre "$GATE_BLOCKING")
+rc=$?
+if [ "$rc" -eq 0 ] && [ -z "$out" ]; then
+  ok "stale marker → nothing runs, exit 0"
+else
+  nope "a marker past the freshness window must not arm hooks" "rc=$rc stdout='$out'"
+fi
+
+# --- Case 37: a marker just inside the window still fires ---
+# Guards the boundary in the other direction, so the window cannot silently
+# collapse to "only brand-new markers count".
+echo "Case 37: marker just inside the 4-hour window still fires"
+write_marker_aged "$GATE_SCRATCH" 14000      # ~3h53m
+out=$(run_hook_dir "$GATE_SCRATCH" pre "$GATE_BLOCKING")
+if echo "$out" | grep -q '"hook":"before_task"'; then
+  ok "marker inside the window → section runs"
+else
+  nope "a marker inside the window must still fire" "stdout='$out'"
+fi
+
+# --- Case 38: override bypasses the gate entirely ---
+echo "Case 38: STRIDE_COPILOT_LITE_ALLOW_DIRECT=1 bypasses a missing marker"
+rm -rf "$GATE_SCRATCH/.stride-copilot-lite"
+out=$(printf '%s' "$GATE_BLOCKING" | STRIDE_COPILOT_LITE_ALLOW_DIRECT=1 \
+  CLAUDE_PROJECT_DIR="$GATE_SCRATCH" "$HOOK_SCRIPT" pre 2>/dev/null)
+if echo "$out" | grep -q '"hook":"before_task"'; then
+  ok "override → section runs with no marker present"
+else
+  nope "override must bypass the gate" "stdout='$out'"
+fi
+
+# --- Case 39: the advisory trigger is gated too ---
+echo "Case 39: advisory after_goal trigger is gated on the same marker"
+rm -rf "$GATE_SCRATCH/.stride-copilot-lite"
+gated_out=$(run_hook_dir "$GATE_SCRATCH" post "$GATE_ADVISORY")
+gated_rc=$?
+write_marker_aged "$GATE_SCRATCH" 0
+armed_out=$(run_hook_dir "$GATE_SCRATCH" post "$GATE_ADVISORY")
+if [ "$gated_rc" -eq 0 ] && [ -z "$gated_out" ] && echo "$armed_out" | grep -q '"hook":"after_goal"'; then
+  ok "after_goal stands down without a marker and runs with one"
+else
+  nope "advisory trigger must be gated identically" "gated_rc=$gated_rc gated='$gated_out' armed='$armed_out'"
+fi
+
+# --- Case 40: a marker with an unparseable started_at falls back to mtime ---
+# A hand-edited or truncated marker must not arm hooks indefinitely.
+echo "Case 40: marker with unparseable started_at falls back to file mtime"
+mkdir -p "$GATE_SCRATCH/.stride-copilot-lite"
+printf '{"session_id":"harness","started_at":"not-a-timestamp","pid":1}\n' > "$GATE_MARKER"
+fresh_out=$(run_hook_dir "$GATE_SCRATCH" pre "$GATE_BLOCKING")
+if _st=$(date -d "@$(( $(date -u +%s) - 14500 ))" +%Y%m%d%H%M.%S 2>/dev/null); then :
+else _st=$(date -r $(( $(date -u +%s) - 14500 )) +%Y%m%d%H%M.%S 2>/dev/null); fi
+touch -t "$_st" "$GATE_MARKER" 2>/dev/null
+stale_out=$(run_hook_dir "$GATE_SCRATCH" pre "$GATE_BLOCKING")
+if echo "$fresh_out" | grep -q '"hook":"before_task"' && [ -z "$stale_out" ]; then
+  ok "unparseable started_at → mtime decides freshness in both directions"
+else
+  nope "mtime fallback must judge freshness" "fresh='$fresh_out' stale='$stale_out'"
+fi
+
+rm -rf "$GATE_SCRATCH"
 
 # --- Summary ---
 echo ""

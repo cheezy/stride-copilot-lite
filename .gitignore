@@ -17,3 +17,7 @@ Thumbs.db
 # Stride orchestrator marker (transient session state)
 .stride/
 .stride_auth.md
+
+# This plugin's own marker directory: the orchestrator activation marker, the
+# boundary marker and its fired-record. All transient session state.
+.stride-copilot-lite/

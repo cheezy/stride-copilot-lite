@@ -36,7 +36,9 @@ stride-copilot-lite/
   CHANGELOG.md                   ← versioned change log
   AGENTS.md                      ← this file
   LICENSE                        ← MIT
-  .gitignore                     ← OS/editor cruft + .stride/ orchestrator marker
+  .stride-copilot-lite/          ← transient run state (gitignored): activation marker,
+                                   boundary marker, fired-record. NOT committed.
+  .gitignore                     ← OS/editor cruft + .stride-copilot-lite/ marker dir
 ```
 
 All `lib/*.md` files document a single pure helper with a Contract table, Spec/Rules, Reference Implementation (bash), Examples, and Edge Cases. The reference implementations are normative — when you ship a runtime that needs an executable helper, transliterate the bash from these docs without renaming functions or changing the exit-code semantics.
@@ -75,7 +77,7 @@ When extending the plugin, add new helpers under `lib/`, new agents under `agent
 
 The problem. `## before_task` and `## after_task` originally keyed on Claude Code's `Agent` tool call with a `subagent_type` of `stride-copilot-lite:task-explorer` / `:task-reviewer`. GitHub Copilot CLI emits **no skill- or agent-dispatch event at all** — its `preToolUse` payloads fire on the underlying tools (`bash`, `edit`, `view`, `create`), and there is no `Agent` tool name in its vocabulary (`stride-copilot/docs/HOOK_RESEARCH.md`). Two of the three hooks therefore never fired on the runtime this plugin is named for.
 
-**Chosen: a marker-file write.** The workflow skill writes `.stride/lite-boundary` at each boundary with a single-line body — `stride-lite-boundary:before_task` or `stride-lite-boundary:after_task`. `hooks.json` registers PreToolUse on `Edit|edit` and `Write|create`; the executor routes only when the path is exactly that marker **and** the body carries exactly that token.
+**Chosen: a marker-file write.** The workflow skill writes `.stride-copilot-lite/lite-boundary` at each boundary with a single-line body — `stride-lite-boundary:before_task` or `stride-lite-boundary:after_task`. `hooks.json` registers PreToolUse on `Edit|edit` and `Write|create`; the executor routes only when the path is exactly that marker **and** the body carries exactly that token.
 
 **False-positive failure mode, and how the routing bounds it.** The matcher is necessarily broad — it sees every file edit in the session — so precision lives in the routing, exactly as `after_goal`'s `*/goal.md` + `## Completion Summary` check already does. Both conditions are required, which bounds the two realistic misfires: a write to the marker path carrying other content (no token → no fire), and the token appearing in ordinary file content or in a shell command (wrong path → no fire). The harnesses assert four distinct near-misses covering both directions plus the wrong-phase and wrong-tool cases. The residual risk is a write to the exact plugin-owned path with the exact token, which nothing but the workflow skill has reason to produce.
 
@@ -83,9 +85,15 @@ The problem. `## before_task` and `## after_task` originally keyed on Claude Cod
 
 **Rejected: keying on the workflow's own file mutations.** `after_goal` already works this way, keying on the `goal.md` Completion Summary write. It cannot serve `before_task`: that boundary is defined as the moment *before* any work happens, and at that point the workflow has mutated nothing. There is no mutation to key on without inventing one — which is what the marker is, made explicit.
 
-**Double-firing.** Under Claude Code both events occur for one boundary. The marker route fires first and records the boundary in `.stride/lite-boundary-fired`; the `Agent` route consumes that record and stands down. The record is *consumed* rather than merely read, so the reviewer loop's legitimate second `after_task` still fires. A pre-v0.10.0 skill writes no marker, leaves no record, and still fires through the `Agent` route unchanged.
+**Double-firing.** Under Claude Code both events occur for one boundary. The marker route fires first and records the boundary in `.stride-copilot-lite/lite-boundary-fired`; the `Agent` route consumes that record and stands down. The record is *consumed* rather than merely read, so the reviewer loop's legitimate second `after_task` still fires. A pre-v0.10.0 skill writes no marker, leaves no record, and still fires through the `Agent` route unchanged.
 
 **Blocking is runtime-specific and both forms are emitted.** Claude Code blocks a PreToolUse call on `exit 2`; Copilot CLI ignores exit codes and blocks on a stdout `{"permissionDecision":"deny"}` object. A failing blocking hook emits both, with the `permissionDecision` keys carried inside the same single-line failure JSON the executor already emits. Emitting only one would leave a failing `before_task` stopping the workflow on one runtime while the other silently continued. `after_goal` is advisory and must never emit a deny — doing so would newly block a write that has always been allowed to proceed.
+
+**Scoping hook firing to a workflow run (v0.10.0, W2023).** The marker intercept is necessarily broader than the agent dispatch it replaced — it sees every file edit in the session — so hook firing is additionally gated on `.stride-copilot-lite/.orchestrator_active`. The workflow skill writes it at Step 0 and clears it on all five exit paths; the executor runs a section only when that marker exists and its `started_at` is within 4 hours. Missing or stale means run nothing and exit 0 — never block the tool call, or ordinary editing outside a workflow would start failing. `STRIDE_COPILOT_LITE_ALLOW_DIRECT=1` bypasses the gate for debugging and CI, and must never be set from a shipped file.
+
+**The marker is coordination, NOT a security boundary.** Any local process can write it, so it establishes only that a workflow run believes itself active — never that a caller is authorized. Do not build authorization on it, and do not describe it as protecting anything. What it actually buys is scope: it keeps a widened matcher from running a user's arbitrary shell commands outside a workflow. A crashed run leaves a marker behind, which is exactly what the freshness window bounds; the clear-on-every-exit rule is what keeps the exposure short in practice rather than four hours long.
+
+**Its own directory, deliberately.** The marker lives in `.stride-copilot-lite/`, never `.stride/` or `.stride-lite/` — a project may have the full Stride plugin, stride-lite and this plugin installed at once, and sharing a directory would let one plugin's lifecycle arm or disarm another's hooks. For the same reason it sits outside the goal directory, so Step 8's terminal PENDING→IMPLEMENTED move cannot carry it along.
 
 **When to revisit.** If Copilot CLI adds a skill-activation event or a documented `Skill`/`Agent` tool name, the marker becomes redundant for that runtime and this decision should be re-opened.
 

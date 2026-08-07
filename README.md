@@ -113,11 +113,17 @@ Generate the skeleton by activating `stride-copilot-lite-init` (see Skills below
 | `## after_task` | `PreToolUse` + the workflow's boundary-marker write at Step 5 | yes | Run tests / lint / format before the reviewer evaluates the diff |
 | `## after_goal` | `PostToolUse` + edit/write on a `goal.md` whose content contains `## Completion Summary` (Step 8) | advisory | Generate a PR, post artifacts, kick off a release pipeline |
 
-All three fire on **both** GitHub Copilot CLI and Claude Code. At each task boundary the workflow writes a one-line marker to `.stride/lite-boundary`, and that write is the interceptable event — Copilot CLI emits no skill- or agent-dispatch event to key on, so the marker is what makes `before_task` and `after_task` work there. The hook routes only when the path and the marker body both match, so writing that token into any other file, or naming it in a shell command, fires nothing. Under Claude Code the subagent dispatch is still recognised for goal directories driven by an older workflow skill, and each boundary still fires exactly once. `AGENTS.md` → "Hook intercept design" records the reasoning and the rejected alternatives.
+All three fire on **both** GitHub Copilot CLI and Claude Code. At each task boundary the workflow writes a one-line marker to `.stride-copilot-lite/lite-boundary`, and that write is the interceptable event — Copilot CLI emits no skill- or agent-dispatch event to key on, so the marker is what makes `before_task` and `after_task` work there. The hook routes only when the path and the marker body both match, so writing that token into any other file, or naming it in a shell command, fires nothing. Under Claude Code the subagent dispatch is still recognised for goal directories driven by an older workflow skill, and each boundary still fires exactly once. `AGENTS.md` → "Hook intercept design" records the reasoning and the rejected alternatives.
 
 A failing `before_task` or `after_task` stops the workflow on either runtime: the hook returns `exit 2` for Claude Code and a `permissionDecision: deny` object for Copilot CLI, so neither can continue past a hook the other blocked on. `after_goal` stays advisory — a `PostToolUse` hook cannot roll back the write it follows.
 
-The marker is written into **your** project at `.stride/lite-boundary`, alongside a small `.stride/lite-boundary-fired` record. Both are transient session state — add `.stride/` to your project's `.gitignore` so a workflow run does not leave them in a commit.
+**Hooks fire only inside a workflow run.** Because the boundary intercept is a file write, it necessarily matches more tool calls than a subagent dispatch would. So the workflow also writes an activation marker at `.stride-copilot-lite/.orchestrator_active` when it starts and deletes it when it stops, and the hook runs a section only while that marker is present and less than 4 hours old. Editing files outside a workflow run therefore fires nothing — your `git pull` or test suite cannot be triggered by ordinary work. A hook that stands down never blocks the tool call; it simply does nothing.
+
+Set `STRIDE_COPILOT_LITE_ALLOW_DIRECT=1` to bypass the gate when debugging or in CI. It is not a setting to leave on.
+
+This is a coordination mechanism, not a security boundary — any local process on your machine can write the marker file.
+
+These files are written into **your** project under `.stride-copilot-lite/`: the activation marker, the boundary marker, and a small fired-record. All are transient session state — add `.stride-copilot-lite/` to your project's `.gitignore` so a workflow run does not leave them in a commit.
 
 ### Variables available to your hook commands
 

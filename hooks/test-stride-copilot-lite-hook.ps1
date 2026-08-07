@@ -37,6 +37,27 @@ function Nope($label, $detail) {
 $Scratch = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "stride-copilot-lite-test-$([System.Guid]::NewGuid())")
 New-Item -ItemType Directory -Force -Path $Scratch | Out-Null
 
+# Every case below simulates a tool call made INSIDE a workflow run, so each
+# scratch project needs a fresh orchestrator marker (W2023). Without one the hook
+# correctly stands down — which is what the dedicated gate cases assert.
+function Write-Marker {
+    param([string]$Dir, [int]$AgeSeconds = 0)
+    $md = Join-Path $Dir '.stride-copilot-lite'
+    New-Item -ItemType Directory -Force -Path $md | Out-Null
+    $when = [datetime]::UtcNow.AddSeconds(-$AgeSeconds)
+    $iso = $when.ToString('yyyy-MM-ddTHH:mm:ssZ')
+    $f = Join-Path $md '.orchestrator_active'
+    # Direct .NET I/O rather than Set-Content/Get-Item: the provider cmdlets are
+    # unreliable for dot-prefixed names here, and the mtime must be aged too so
+    # the executor's mtime fallback cannot mask a started_at it should reject.
+    [System.IO.File]::WriteAllText($f, "{`"session_id`":`"harness`",`"started_at`":`"$iso`",`"pid`":1}")
+    [System.IO.File]::SetLastWriteTimeUtc($f, $when)
+}
+function Remove-Marker {
+    param([string]$Dir)
+    Remove-Item -Recurse -Force (Join-Path $Dir '.stride-copilot-lite') -ErrorAction SilentlyContinue
+}
+
 @'
 ## before_task
 
@@ -56,12 +77,14 @@ echo "after_task fired"
 echo "after_goal fired"
 ```
 '@ | Set-Content -Path (Join-Path $Scratch '.stride_lite.md')
+Write-Marker $Scratch
 
 # --- Failing-command fixture: three sections that each run a failing command
 # (`false`, exit 1) — drives the exit-code contract cases below. Kept in its own
 # scratch dir so it never perturbs the success-path .stride_lite.md above. ---
 $FailScratch = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "stride-copilot-lite-fail-$([System.Guid]::NewGuid())")
 New-Item -ItemType Directory -Force -Path $FailScratch | Out-Null
+Write-Marker $FailScratch
 
 @'
 ## before_task
@@ -184,12 +207,12 @@ if ($rc -eq 0 -and $out -match '"hook":"after_goal"' -and $out -match '"status":
 # ==================================================================
 
 function Clear-Fired($dir) {
-    Remove-Item -Force (Join-Path (Join-Path $dir '.stride') 'lite-boundary-fired') -ErrorAction SilentlyContinue
+    Remove-Item -Force (Join-Path (Join-Path $dir '.stride-copilot-lite') 'lite-boundary-fired') -ErrorAction SilentlyContinue
 }
 
-$MarkerCC = '{"tool_name":"Write","tool_input":{"file_path":"/p/.stride/lite-boundary","content":"stride-lite-boundary:before_task"}}'
-$MarkerCopBefore = '{"toolName":"create","toolArgs":"{\"file_path\":\"/p/.stride/lite-boundary\",\"content\":\"stride-lite-boundary:before_task\"}"}'
-$MarkerCopAfter = '{"toolName":"edit","toolArgs":"{\"file_path\":\".stride/lite-boundary\",\"content\":\"stride-lite-boundary:after_task\"}"}'
+$MarkerCC = '{"tool_name":"Write","tool_input":{"file_path":"/p/.stride-copilot-lite/lite-boundary","content":"stride-lite-boundary:before_task"}}'
+$MarkerCopBefore = '{"toolName":"create","toolArgs":"{\"file_path\":\"/p/.stride-copilot-lite/lite-boundary\",\"content\":\"stride-lite-boundary:before_task\"}"}'
+$MarkerCopAfter = '{"toolName":"edit","toolArgs":"{\"file_path\":\".stride-copilot-lite/lite-boundary\",\"content\":\"stride-lite-boundary:after_task\"}"}'
 
 # --- Case 11: Copilot CLI marker write → before_task ---
 Write-Host "Case 11: Copilot CLI boundary marker triggers before_task"
@@ -218,7 +241,7 @@ if ($out -match '"hook":"before_task"' -and $out -match '"status":"success"') {
 # --- Case 14: NEAR-MISS — marker path, no boundary token → no-op ---
 Write-Host "Case 14: NEAR-MISS marker path without a boundary token → no-op"
 Clear-Fired $Scratch
-$out = Run-Hook 'pre' '{"toolName":"create","toolArgs":"{\"file_path\":\"/p/.stride/lite-boundary\",\"content\":\"just some text\"}"}'
+$out = Run-Hook 'pre' '{"toolName":"create","toolArgs":"{\"file_path\":\"/p/.stride-copilot-lite/lite-boundary\",\"content\":\"just some text\"}"}'
 if (-not $out) { Ok "marker path + no token → no-op (no stdout)" }
 else { Nope "marker path without token should no-op" "stdout='$out'" }
 
@@ -248,6 +271,7 @@ Write-Host "Case 18: marker write + Agent dispatch → before_task fires exactly
 $DedupeScratch = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "stride-copilot-lite-dedupe-$([System.Guid]::NewGuid())")
 New-Item -ItemType Directory -Force -Path $DedupeScratch | Out-Null
 Copy-Item (Join-Path $Scratch '.stride_lite.md') (Join-Path $DedupeScratch '.stride_lite.md')
+Write-Marker $DedupeScratch
 $first = Run-Hook-Dir $DedupeScratch 'pre' $MarkerCC
 $second = Run-Hook-Dir $DedupeScratch 'pre' '{"tool_name":"Agent","tool_input":{"subagent_type":"stride-copilot-lite:task-explorer"}}'
 if ($first -match '"hook":"before_task"' -and -not $second) {
@@ -291,10 +315,11 @@ Write-Host "Case 23: full workflow pass → before_task, after_task, after_goal 
 $SeqScratch = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "stride-copilot-lite-seq-$([System.Guid]::NewGuid())")
 New-Item -ItemType Directory -Force -Path $SeqScratch | Out-Null
 Copy-Item (Join-Path $Scratch '.stride_lite.md') (Join-Path $SeqScratch '.stride_lite.md')
+Write-Marker $SeqScratch
 $seqEvents = @(
     @('pre',  $MarkerCC),
     @('pre',  '{"tool_name":"Agent","tool_input":{"subagent_type":"stride-copilot-lite:task-explorer"}}'),
-    @('pre',  '{"tool_name":"Write","tool_input":{"file_path":"/p/.stride/lite-boundary","content":"stride-lite-boundary:after_task"}}'),
+    @('pre',  '{"tool_name":"Write","tool_input":{"file_path":"/p/.stride-copilot-lite/lite-boundary","content":"stride-lite-boundary:after_task"}}'),
     @('pre',  '{"tool_name":"Agent","tool_input":{"subagent_type":"stride-copilot-lite:task-reviewer"}}'),
     @('post', '{"tool_name":"Edit","tool_input":{"file_path":"g/goal.md","new_string":"## Completion Summary"}}')
 )
@@ -347,12 +372,14 @@ function Get-Probe($key) {
     return ''
 }
 
+Write-Marker $EnvScratch
+
 $TaskRel = "$GoalRel/task2.md"
 
 # --- Case 24: every documented key reaches the executed command ---
 Write-Host "Case 24: all nine exported keys reach the command"
 Remove-Item -LiteralPath $EnvProbe -ErrorAction SilentlyContinue
-$null = Run-Hook-Dir $EnvScratch 'pre' "{`"tool_name`":`"Write`",`"tool_input`":{`"file_path`":`"/p/.stride/lite-boundary`",`"content`":`"stride-lite-boundary:before_task:$TaskRel`"}}"
+$null = Run-Hook-Dir $EnvScratch 'pre' "{`"tool_name`":`"Write`",`"tool_input`":{`"file_path`":`"/p/.stride-copilot-lite/lite-boundary`",`"content`":`"stride-lite-boundary:before_task:$TaskRel`"}}"
 $missing = @()
 foreach ($k in @('HOOK_NAME','AGENT_NAME','TASK_FILE','TASK_NUMBER','TASK_TITLE','GOAL_DIR','GOAL_FILE','GOAL_SLUG','GOAL_TITLE')) {
     if (-not (Test-Path -LiteralPath $EnvProbe)) { $missing += $k; continue }
@@ -374,7 +401,7 @@ if ($t -eq 'Subscribe $(id) `whoami` ${HOME}') {
 # --- Case 26: a marker with no task path → task keys empty, hook still fires ---
 Write-Host "Case 26: marker without a task path → empty task keys, unchanged exit code"
 Remove-Item -LiteralPath $EnvProbe -ErrorAction SilentlyContinue
-$out = Run-Hook-Dir $EnvScratch 'pre' '{"tool_name":"Write","tool_input":{"file_path":"/p/.stride/lite-boundary","content":"stride-lite-boundary:before_task"}}'
+$out = Run-Hook-Dir $EnvScratch 'pre' '{"tool_name":"Write","tool_input":{"file_path":"/p/.stride-copilot-lite/lite-boundary","content":"stride-lite-boundary:before_task"}}'
 $rc = $LASTEXITCODE
 if ($rc -eq 0 -and $out -match '"status":"success"' -and -not (Get-Probe 'TASK_FILE') -and -not (Get-Probe 'TASK_NUMBER')) {
     Ok "undeterminable keys export as defined-but-empty; hook fires, exit 0"
@@ -383,7 +410,7 @@ if ($rc -eq 0 -and $out -match '"status":"success"' -and -not (Get-Probe 'TASK_F
 # --- Case 27: a path escaping the project directory is rejected ---
 Write-Host "Case 27: task path outside the project directory is rejected"
 Remove-Item -LiteralPath $EnvProbe -ErrorAction SilentlyContinue
-$null = Run-Hook-Dir $EnvScratch 'pre' '{"tool_name":"Write","tool_input":{"file_path":"/p/.stride/lite-boundary","content":"stride-lite-boundary:before_task:../../../../../../etc/passwd"}}'
+$null = Run-Hook-Dir $EnvScratch 'pre' '{"tool_name":"Write","tool_input":{"file_path":"/p/.stride-copilot-lite/lite-boundary","content":"stride-lite-boundary:before_task:../../../../../../etc/passwd"}}'
 if (-not (Get-Probe 'TASK_FILE') -and -not (Get-Probe 'TASK_TITLE')) {
     Ok "traversal path rejected → TASK_FILE and TASK_TITLE empty"
 } else { Nope "path outside the project must be rejected" "file='$(Get-Probe 'TASK_FILE')'" }
@@ -398,6 +425,85 @@ if ((Get-Probe 'HOOK_NAME') -eq 'after_goal' -and (Get-Probe 'GOAL_SLUG') -eq 'a
 } else { Nope "after_goal goal-context derivation" "hook='$(Get-Probe 'HOOK_NAME')' slug='$(Get-Probe 'GOAL_SLUG')'" }
 
 Remove-Item -Recurse -Force $EnvScratch -ErrorAction SilentlyContinue
+
+# ==================================================================
+# Orchestrator activation gate (W2023) — mirrors bash cases 34-40.
+# ==================================================================
+
+$GateScratch = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "stride-copilot-lite-gate-$([System.Guid]::NewGuid())")
+New-Item -ItemType Directory -Force -Path $GateScratch | Out-Null
+Set-Content -LiteralPath (Join-Path $GateScratch '.stride_lite.md') -Encoding UTF8 -Value @"
+## before_task
+
+``````bash
+echo GATE_BEFORE
+``````
+
+## after_goal
+
+``````bash
+echo GATE_AFTER_GOAL
+``````
+"@
+$GateBlocking = '{"tool_name":"Write","tool_input":{"file_path":"/p/.stride-copilot-lite/lite-boundary","content":"stride-lite-boundary:before_task"}}'
+$GateAdvisory = '{"tool_name":"Edit","tool_input":{"file_path":"g/goal.md","new_string":"## Completion Summary"}}'
+
+# --- Case 29: fresh marker → the section runs ---
+Write-Host "Case 29: fresh marker → blocking trigger runs its section"
+Write-Marker $GateScratch 0
+$out = Run-Hook-Dir $GateScratch 'pre' $GateBlocking
+if ($out -match '"hook":"before_task"' -and $out -match '"status":"success"') {
+    Ok "fresh marker → before_task runs"
+} else { Nope "fresh marker must run the section" "stdout='$out'" }
+
+# --- Case 30: no marker → stands down, exit 0, empty stdout, no block ---
+Write-Host "Case 30: no marker → blocking trigger stands down, exit 0, empty stdout"
+Remove-Marker $GateScratch
+$out = Run-Hook-Dir $GateScratch 'pre' $GateBlocking
+$rc = $LASTEXITCODE
+if ($rc -eq 0 -and -not $out) {
+    Ok "missing marker → nothing runs, exit 0 (tool call not blocked)"
+} else { Nope "missing marker must stand down without blocking" "rc=$rc stdout='$out'" }
+
+# --- Case 31: stale marker (older than 4h) → stands down ---
+Write-Host "Case 31: marker older than 4 hours → stands down"
+Write-Marker $GateScratch 14500
+$out = Run-Hook-Dir $GateScratch 'pre' $GateBlocking
+$rc = $LASTEXITCODE
+if ($rc -eq 0 -and -not $out) {
+    Ok "stale marker → nothing runs, exit 0"
+} else { Nope "a marker past the freshness window must not arm hooks" "rc=$rc stdout='$out'" }
+
+# --- Case 32: a marker just inside the window still fires ---
+Write-Host "Case 32: marker just inside the 4-hour window still fires"
+Write-Marker $GateScratch 14000
+$out = Run-Hook-Dir $GateScratch 'pre' $GateBlocking
+if ($out -match '"hook":"before_task"') {
+    Ok "marker inside the window → section runs"
+} else { Nope "a marker inside the window must still fire" "stdout='$out'" }
+
+# --- Case 33: override bypasses the gate ---
+Write-Host "Case 33: STRIDE_COPILOT_LITE_ALLOW_DIRECT=1 bypasses a missing marker"
+Remove-Marker $GateScratch
+$env:STRIDE_COPILOT_LITE_ALLOW_DIRECT = '1'
+$out = Run-Hook-Dir $GateScratch 'pre' $GateBlocking
+Remove-Item Env:\STRIDE_COPILOT_LITE_ALLOW_DIRECT -ErrorAction SilentlyContinue
+if ($out -match '"hook":"before_task"') {
+    Ok "override → section runs with no marker present"
+} else { Nope "override must bypass the gate" "stdout='$out'" }
+
+# --- Case 34: the advisory trigger is gated too ---
+Write-Host "Case 34: advisory after_goal trigger is gated on the same marker"
+Remove-Marker $GateScratch
+$gatedOut = Run-Hook-Dir $GateScratch 'post' $GateAdvisory
+$gatedRc = $LASTEXITCODE
+Write-Marker $GateScratch 0
+$armedOut = Run-Hook-Dir $GateScratch 'post' $GateAdvisory
+if ($gatedRc -eq 0 -and -not $gatedOut -and $armedOut -match '"hook":"after_goal"') {
+    Ok "after_goal stands down without a marker and runs with one"
+} else { Nope "advisory trigger must be gated identically" "gatedRc=$gatedRc gated='$gatedOut' armed='$armedOut'" }
+
+Remove-Item -Recurse -Force $GateScratch -ErrorAction SilentlyContinue
 
 # --- Cleanup ---
 Remove-Item -Recurse -Force $Scratch -ErrorAction SilentlyContinue

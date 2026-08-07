@@ -56,6 +56,20 @@ After exit, do **not** re-enter the loop, do **not** start another goal, do **no
 
 For each incomplete task in the goal directory (in numeric `taskN.md` order), walk these eight steps. On the final task, the workflow exits cleanly after Step 8 instead of looping.
 
+### Step 0 — Write the orchestrator activation marker
+
+**Do this once, before Step 1, on every activation.** Write `.stride-copilot-lite/.orchestrator_active` in the project root with a single line of JSON:
+
+```json
+{"session_id":"<session id or a uuid>","started_at":"<ISO-8601 UTC, e.g. 2026-08-07T10:22:31Z>","pid":<pid or 0>}
+```
+
+Hook firing is gated on this marker. The executor runs a `.stride_lite.md` section only when the marker exists and its `started_at` is **within 4 hours**; otherwise it runs nothing and exits 0. Without the marker the workflow's own boundary writes fire no hooks at all, so skipping Step 0 silently disables `before_task` and `after_task` for the whole run.
+
+The marker exists because the boundary intercept is a file write, and any event Copilot CLI actually emits is broader than a subagent dispatch. It scopes hook firing to a workflow run, so an ordinary edit outside one cannot run the user's `git pull` or test suite. **It is a coordination mechanism, not a security boundary** — any local process can write it, and nothing may treat it as authorization.
+
+**You must clear it on every exit path.** See "Clearing the activation marker" below; that discipline, not the write, is the part that is easy to get wrong.
+
 ### Step 1 — Select the next task
 
 Read the goal directory. Iterate `task1.md`, `task2.md`, `task3.md`, ... in strict numeric order. For each task file, check whether it contains a `## Completion Summary` section at the bottom of the file:
@@ -63,13 +77,13 @@ Read the goal directory. Iterate `task1.md`, `task2.md`, `task3.md`, ... in stri
 - If yes → this task is complete; skip to the next numeric task.
 - If no → this is the **next task**. Proceed to Step 2 with this file as the active task.
 
-If every `taskN.md` in the goal directory already has a `## Completion Summary` section, the goal is already complete — log this and stop (without running `after_goal` again).
+If every `taskN.md` in the goal directory already has a `## Completion Summary` section, the goal is already complete — log this, clear the activation marker, and stop (without running `after_goal` again).
 
-**Gap handling.** If the iteration finds `task1.md` and `task3.md` but no `task2.md`, treat this as a hard error: the goal directory is malformed. Surface the gap to the user and stop without mutation. (The contract is "consecutive numeric files starting at 1"; do NOT silently skip gaps.)
+**Gap handling.** If the iteration finds `task1.md` and `task3.md` but no `task2.md`, treat this as a hard error: the goal directory is malformed. Surface the gap to the user, clear the activation marker (see "Clearing the activation marker"), and stop without mutation. (The contract is "consecutive numeric files starting at 1"; do NOT silently skip gaps.)
 
 ### Step 2 — Execute the `## before_task` hook
 
-**Write the boundary marker.** Write the file `.stride/lite-boundary` in the project root with this exact single-line content, appending the active task file's path:
+**Write the boundary marker.** Write the file `.stride-copilot-lite/lite-boundary` in the project root with this exact single-line content, appending the active task file's path:
 
 ```
 stride-lite-boundary:before_task:<path to the active taskN.md>
@@ -77,19 +91,19 @@ stride-lite-boundary:before_task:<path to the active taskN.md>
 
 for example `stride-lite-boundary:before_task:docs/implementation/PENDING/add-notifications/task2.md`. The trailing path is what lets the harness export `TASK_FILE`, `TASK_NUMBER`, `TASK_TITLE`, `GOAL_DIR`, `GOAL_FILE`, `GOAL_SLUG` and `GOAL_TITLE` into the user's hook commands (see "Hook execution contract"). Omitting it still fires the hook — those variables simply arrive empty — so never skip the marker write because you cannot resolve a path.
 
-That write is what fires the hook. `hooks/hooks.json` registers a **PreToolUse** hook on the write tools, and `hooks/stride-copilot-lite-hook.sh` routes it to the `## before_task` section of `.stride_lite.md` when — and only when — the path is exactly `.stride/lite-boundary` **and** the body carries that exact token. Writing the marker is mandatory: it is the only boundary signal GitHub Copilot CLI actually emits, because Copilot has no skill/agent dispatch event to intercept (see `AGENTS.md` → "Hook intercept design"). Under Claude Code the same write fires the same hook, and the subsequent Step 3 dispatch stands down rather than firing it a second time.
+That write is what fires the hook. `hooks/hooks.json` registers a **PreToolUse** hook on the write tools, and `hooks/stride-copilot-lite-hook.sh` routes it to the `## before_task` section of `.stride_lite.md` when — and only when — the path is exactly `.stride-copilot-lite/lite-boundary` **and** the body carries that exact token. Writing the marker is mandatory: it is the only boundary signal GitHub Copilot CLI actually emits, because Copilot has no skill/agent dispatch event to intercept (see `AGENTS.md` → "Hook intercept design"). Under Claude Code the same write fires the same hook, and the subsequent Step 3 dispatch stands down rather than firing it a second time.
 
 The hook runs **before** the marker write completes. A failing `before_task` command blocks the write and stops you here — on Claude Code via `exit 2`, on Copilot CLI via a `permissionDecision: deny` object on stdout. Both are emitted, so the workflow halts identically on either runtime.
 
 You do **NOT** read `.stride_lite.md` or execute its hook sections directly in this step — the harness does that. Missing `.stride_lite.md`, a missing `## before_task` section, or an empty fenced block all degrade to a clean no-op (exit 0) so the workflow proceeds. A failing command emits a structured failure JSON on stdout for your Step 8 Completion Summary to reference.
 
-If the marker write is blocked by a `before_task` failure, surface the failing command and its stderr to the user and stop the workflow. Do **not** proceed to Step 3, and do **not** retry the write to get past the hook — the block is the hook doing its job.
+If the marker write is blocked by a `before_task` failure, surface the failing command and its stderr to the user, clear the activation marker, and stop the workflow. Do **not** proceed to Step 3, and do **not** retry the write to get past the hook — the block is the hook doing its job.
 
 ### Step 3 — Dispatch `stride-copilot-lite:task-explorer`
 
 Dispatch `stride-copilot-lite:task-explorer` as a subagent with the active task file's path as the prompt input. The explorer parses the task file's metadata (`## Key files`, `## Patterns to follow`, `## Where`, `## Testing strategy`), runs read-only codebase exploration, and appends/replaces a `## Exploration Report` section at the bottom of the task file (per the v0.6.0 contract).
 
-If the explorer dispatch fails (e.g., the agent surfaces a clear error and exits without mutation), stop the workflow and surface the error. The explorer is a hard prerequisite for high-quality implementation in Step 4.
+If the explorer dispatch fails (e.g., the agent surfaces a clear error and exits without mutation), clear the activation marker and stop the workflow, surfacing the error. The explorer is a hard prerequisite for high-quality implementation in Step 4.
 
 ### Step 4 — Implementation
 
@@ -101,7 +115,7 @@ Follow the acceptance criteria as your definition of done. Replicate the pattern
 
 ### Step 5 — Execute the `## after_task` hook
 
-Same boundary-marker pattern as Step 2. Write `.stride/lite-boundary` again, this time with:
+Same boundary-marker pattern as Step 2. Write `.stride-copilot-lite/lite-boundary` again, this time with:
 
 ```
 stride-lite-boundary:after_task:<path to the active taskN.md>
@@ -126,7 +140,7 @@ Read the active task file's `## Review Report` section. Extract the first fenced
 - If `status == "approved"` → proceed to Step 8.
 - If `status == "changes_requested"` → increment the `review_iteration` counter (initialized to 0 at Step 2) and:
   - If `review_iteration < max_review_iterations` (default 3) → loop back to **Step 4** (Implementation). Make further code changes addressing the reviewer's issues. Then re-run Steps 5, 6, 7 in sequence.
-  - If `review_iteration >= max_review_iterations` → stop the workflow. Surface the failing review's prose summary line + the list of unresolved issues to the user. Do NOT write a Completion Summary; the task remains incomplete.
+  - If `review_iteration >= max_review_iterations` → clear the activation marker and stop the workflow. Surface the failing review's prose summary line + the list of unresolved issues to the user. Do NOT write a Completion Summary; the task remains incomplete.
 
 **JSON parse fallback.** If the `## Review Report` section has no fenced ```json block (e.g., the agent fell back to prose-only), parse the prose summary line instead: substring-match `"Approved"` → treat as `approved`; substring-match `"N issues found"` → treat as `changes_requested`. If neither pattern matches, treat as `changes_requested` (conservative default — better to retry than to falsely approve).
 
@@ -191,7 +205,26 @@ Append a `## Completion Summary` section to the active task file at EOF. The sec
      esac
      ```
 
-  4. Workflow complete. Stop.
+  4. **Clear the activation marker** — delete `.stride-copilot-lite/.orchestrator_active`. This is the clean-completion exit; the four other exits are listed under "Clearing the activation marker".
+  5. Workflow complete. Stop.
+
+## Clearing the activation marker
+
+Delete `.stride-copilot-lite/.orchestrator_active` when the workflow stops — **every** path, not just the happy one. A marker left behind keeps hooks armed for up to 4 hours, so an unrelated edit in the same project could run the user's hook commands outside any workflow. The freshness window bounds that; clearing on exit is what keeps it short in practice.
+
+There are five exits, and all five clear:
+
+| Exit | Where |
+|---|---|
+| Clean completion | Step 8's final-task branch, after the archive move |
+| Goal already complete | Step 1, when every `taskN.md` already has a Completion Summary |
+| Malformed goal directory | Step 1's gap-handling hard error, plus the missing-`goal.md` and no-`taskN.md` errors |
+| Explorer or reviewer dispatch failure | Steps 3 and 6 |
+| Review-iteration cap reached | Step 7, when `review_iteration >= max_review_iterations` |
+
+A blocking `before_task` / `after_task` failure also stops the workflow (Steps 2 and 5) — clear the marker there too.
+
+If you cannot delete it, say so plainly rather than continuing silently: the user needs to know hooks may stay armed until the window expires.
 
 ## Hook execution contract
 
@@ -199,8 +232,8 @@ As of v0.9.0 the three hooks (`## before_task`, `## after_task`, `## after_goal`
 
 | Section | Phase | Matcher | Trigger condition | Blocking? |
 |---|---|---|---|---|
-| `## before_task` | PreToolUse | `Edit\|edit` or `Write\|create` | file path is `.stride/lite-boundary` AND body is `stride-lite-boundary:before_task` (Step 2 marker write) | yes — blocks the write |
-| `## after_task` | PreToolUse | `Edit\|edit` or `Write\|create` | file path is `.stride/lite-boundary` AND body is `stride-lite-boundary:after_task` (Step 5 marker write) | yes — blocks the write |
+| `## before_task` | PreToolUse | `Edit\|edit` or `Write\|create` | file path is `.stride-copilot-lite/lite-boundary` AND body is `stride-lite-boundary:before_task` (Step 2 marker write) | yes — blocks the write |
+| `## after_task` | PreToolUse | `Edit\|edit` or `Write\|create` | file path is `.stride-copilot-lite/lite-boundary` AND body is `stride-lite-boundary:after_task` (Step 5 marker write) | yes — blocks the write |
 | `## before_task` | PreToolUse | `Agent` | subagent identity == `"stride-copilot-lite:task-explorer"` — **legacy Claude Code route**, stands down when the Step 2 marker already fired | yes — blocks the dispatch |
 | `## after_task` | PreToolUse | `Agent` | subagent identity == `"stride-copilot-lite:task-reviewer"` — **legacy Claude Code route**, stands down when the Step 5 marker already fired | yes — blocks the dispatch |
 | `## after_goal` | PostToolUse | `Edit\|edit` or `Write\|create` | file path ends in `goal.md` AND body contains `## Completion Summary` (Step 8 final-task wrap-up) | no (advisory; failure cannot roll back the write) |
@@ -245,7 +278,7 @@ Nothing derived is written to disk, and no value appears in the result JSON — 
 The workflow skill's Bash usage is scoped to a specific set of operations. Explicit ✅ examples:
 
 - ✅ `.stride_lite.md` hook execution is performed by the harness via `hooks/stride-copilot-lite-hook.sh` (or `.ps1` on native Windows) — this skill body does NOT run `## before_task` / `## after_task` / `## after_goal` directly.
-- ✅ Writing `.stride/lite-boundary` in Steps 2 and 5 — the boundary marker that fires `before_task` / `after_task`. This is the one file mutation outside the goal directory the skill is permitted, and it is deliberately a **file write rather than a shell command**: the trigger stays unforgeable by anything that merely echoes a string, and the skill needs no new Bash grant to signal a boundary. Write only the two documented single-line bodies, and only at those two steps.
+- ✅ Writing `.stride-copilot-lite/lite-boundary` in Steps 2 and 5 — the boundary marker that fires `before_task` / `after_task`. This is the one file mutation outside the goal directory the skill is permitted, and it is deliberately a **file write rather than a shell command**: the trigger stays unforgeable by anything that merely echoes a string, and the skill needs no new Bash grant to signal a boundary. Write only the two documented single-line bodies, and only at those two steps.
 - ✅ `git diff HEAD` — captured by the task-reviewer agent in Step 6 (not directly by this skill; the agent has its own Bash grant).
 - ✅ `ls`, `test -f`, `find` — for filesystem navigation inside the goal directory (listing taskN.md files, checking for task(K+1).md existence).
 - ✅ `git rev-parse --show-toplevel` — for locating the project root (e.g., to inspect `.stride_lite.md` for the user, not to execute it).
@@ -268,14 +301,14 @@ If the user wants build/test/lint runs as part of the workflow, they put them in
 - **No `.stride_lite.md` in project root** — log a warning, treat all three hooks as no-ops, proceed with the workflow. The user may not have initialized stride-lite; that's a valid (if reduced-functionality) configuration.
 - **`.stride_lite.md` exists but a hook section is missing** — treat that specific hook as a no-op (exit_code 0, empty output). Don't fail; the user may have deliberately omitted unneeded hooks.
 - **`.stride_lite.md` hook section exists but the fenced bash block is empty** — same as missing: no-op, proceed.
-- **Goal directory missing `goal.md`** — hard error: surface a clear message ("goal_directory_path is not a valid stride-lite goal — no goal.md found") and stop.
-- **Goal directory has no taskN.md files** — hard error: surface a clear message and stop. The workflow needs at least task1.md to do anything.
+- **Goal directory missing `goal.md`** — hard error: surface a clear message ("goal_directory_path is not a valid stride-lite goal — no goal.md found"), clear the activation marker, and stop.
+- **Goal directory has no taskN.md files** — hard error: surface a clear message, clear the activation marker, and stop. The workflow needs at least task1.md to do anything.
 - **Goal directory has task1.md and task3.md but no task2.md** — hard error per Step 1's gap-handling rule. Surface the gap and stop.
 - **Every taskN.md already has `## Completion Summary`** — log "goal already complete" and stop. Do NOT re-run after_goal (the goal has already been wrapped up in a prior session).
 - **task-explorer agent dispatch fails or returns an error** — surface the explorer's error and stop. The explorer's findings are a prerequisite for high-quality implementation.
 - **task-reviewer agent dispatch fails or returns an error** — surface the reviewer's error and stop. Without a review verdict, the workflow can't decide Step 7.
 - **task-reviewer's `## Review Report` has no fenced JSON block** — fall back to prose-substring matching per Step 7's JSON parse fallback. Conservative default on ambiguity: treat as `changes_requested`.
-- **Review-loop exhausts max_review_iterations** — stop without writing the Completion Summary. The task file retains its latest `## Review Report` section as the audit trail. The user can manually fix the issues and re-run the workflow; on re-run the task is "incomplete" (no Completion Summary) so Step 1 picks it up again.
+- **Review-loop exhausts max_review_iterations** — clear the activation marker and stop without writing the Completion Summary. The task file retains its latest `## Review Report` section as the audit trail. The user can manually fix the issues and re-run the workflow; on re-run the task is "incomplete" (no Completion Summary) so Step 1 picks it up again.
 - **after_goal hook fails after goal.md Completion Summary is written** — surface the failure but do NOT roll back the goal.md mutation. The user can re-run the after_goal hook manually (e.g., by inspecting `.stride_lite.md` and running the commands directly).
 
 ## Concrete walkthrough
