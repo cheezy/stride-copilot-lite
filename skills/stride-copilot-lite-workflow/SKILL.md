@@ -222,6 +222,60 @@ Worked example of the skip record, for a `small` task listing one key file:
   - Step 6 skipped — no `stride-copilot-lite:task-reviewer` dispatch, so this task has no `## Review Report`.
 ```
 
+#### Workflow telemetry
+
+Every Completion Summary carries a telemetry block recording **all seven task-level steps**. Its purpose is to make workflow adherence measurable and shortcuts visible — which only works if the record is complete, so **every name appears every time**. A step that did not run is recorded as skipped with a reason; it is never omitted. Omission is precisely the shortcut this exists to catch, and a summary that simply does not mention the explorer is indistinguishable from one where the agent forgot to dispatch it.
+
+The vocabulary is **this plugin's own seven steps**, in lifecycle order:
+
+| Name | Step | Recorded as dispatched when |
+|---|---|---|
+| `enricher` | 1a | `stride-copilot-lite:task-enricher` was dispatched |
+| `before_task` | 2 | the boundary marker was written and the hook ran |
+| `explorer` | 3 | `stride-copilot-lite:task-explorer` was dispatched |
+| `planner` | 3a | an implementation plan was outlined |
+| `implementation` | 4 | always — this step never skips |
+| `after_task` | 5 | the boundary marker was written and the hook ran |
+| `reviewer` | 6 | `stride-copilot-lite:task-reviewer` was dispatched |
+
+There is deliberately no `after_doing` or `before_review` — those are the full Stride plugin's hook names and do not exist here; recording them would produce telemetry comparable to nothing. `after_goal` is absent too: it is goal-level, fires once per goal rather than once per task, and belongs in `goal.md`'s summary rather than a task's.
+
+**A reason names the condition, never the outcome.** `"explorer was skipped"` restates the `dispatched: false` beside it and tells a reader nothing. `"Decision matrix: small complexity, 1 key file → skip-all row"` names the rule that fired, which is what makes the record auditable after the fact. The common reasons are the matrix rows, the enrichment gate finding nothing sparse, and — for `before_task` / `after_task` — the matrix having skipped the boundary write that fires them.
+
+**Record a duration only where one was measured.** The hook executor emits `duration_seconds` in its success JSON, so `before_task` and `after_task` have a real figure to record. Subagent dispatches usually do not, and a dispatched step with no available duration is recorded as dispatched **with the duration omitted** — never with an invented one. A fabricated number is worse than an absent one, because it looks like data.
+
+**Render both a table and a fenced JSON block.** The table is what a human reads; the JSON is what tooling parses. This mirrors `task-reviewer`, which already emits a prose summary line alongside a fenced ```json block for exactly this reason. The table is the primary carrier — the summary is read by people first, and the JSON must never be the only place a fact appears.
+
+**Telemetry carries step names, durations and reasons only.** No command output, no environment values, no paths outside the project. The Completion Summary is committed. A skip reason is free text you write, so describe the matrix rule in your own words and never quote task-file text verbatim — that text is agent-authored and untrusted.
+
+Render it like this:
+
+```markdown
+### Workflow telemetry
+
+| Step | Dispatched | Duration | Reason |
+|---|:---:|---|---|
+| `enricher` | no | — | All four operational sections already populated |
+| `before_task` | yes | 3s | — |
+| `explorer` | yes | — | — |
+| `planner` | no | — | Decision matrix: `explore-review` row — planning is `full`-only |
+| `implementation` | yes | — | — |
+| `after_task` | yes | 12s | — |
+| `reviewer` | yes | — | — |
+
+```json
+{"workflow_steps":[
+  {"name":"enricher","dispatched":false,"reason":"All four operational sections already populated"},
+  {"name":"before_task","dispatched":true,"duration_seconds":3},
+  {"name":"explorer","dispatched":true},
+  {"name":"planner","dispatched":false,"reason":"Decision matrix: explore-review row — planning is full-only"},
+  {"name":"implementation","dispatched":true},
+  {"name":"after_task","dispatched":true,"duration_seconds":12},
+  {"name":"reviewer","dispatched":true}
+]}
+```
+```
+
 **Final-task detection.** After appending the Completion Summary to `taskK.md`, check the goal directory for `task(K+1).md`:
 
 - If `task(K+1).md` **exists** → return to Step 1 to process the next task in the loop.
@@ -423,27 +477,90 @@ If the user wants build/test/lint runs as part of the workflow, they put them in
 
 A two-task goal at `docs/implementation/PENDING/add-notifications/` containing `goal.md`, `task1.md`, `task2.md`, and a `.stride_lite.md` in the project root with all three hook sections populated. The workflow proceeds:
 
-**Iteration 1 — task1.md (Emit PubSub broadcast on comment insert).**
+**Step 0.** Write `.stride-copilot-lite/.orchestrator_active`. Until it exists no hook fires at all, so this happens before anything else.
+
+**Iteration 1 — task1.md (Emit PubSub broadcast on comment insert). `medium` complexity, 2 key files.**
 
 - **Step 1.** Scan goal dir. task1.md has no `## Completion Summary` → next task is task1.md.
-- **Step 2.** The harness auto-fires `.stride_lite.md` `## before_task` (e.g., `git pull origin main`) as a PreToolUse hook on the Step 3 `stride-copilot-lite:task-explorer` dispatch — the skill body does NOT read or execute it. It exits 0 and the dispatch proceeds. (A non-zero exit would `exit 2`, block the dispatch, and surface as a Step 3 failure.)
-- **Step 3.** Dispatch `stride-copilot-lite:task-explorer` with `task1.md` as the prompt. After ~30s the agent appends a `## Exploration Report` section to task1.md covering File state per key_file, Pattern matches (Kanban.Boards.create_board broadcast at boards.ex:42), Related tests (test/kanban/comments_test.exs), Implementation notes (use Kanban.PubSub, follow with-chain placement).
-- **Step 4.** Implement the broadcast. Modify `lib/kanban/comments.ex` (add Phoenix.PubSub.broadcast inside the success arm) and `test/kanban/comments_test.exs` (subscriber test).
-- **Step 5.** The harness auto-fires `.stride_lite.md` `## after_task` (e.g., `mix test` and `mix credo --strict`) as a PreToolUse hook on the Step 6 `stride-copilot-lite:task-reviewer` dispatch — again the skill body does NOT execute it. It exits 0 and the dispatch proceeds. (A non-zero exit would block the reviewer dispatch and surface as a Step 6 failure.)
-- **Step 6.** Dispatch `stride-copilot-lite:task-reviewer` with `task1.md` as the prompt. After ~25s the agent appends a `## Review Report` section. The embedded JSON's `status` is `approved`.
-- **Step 7.** Parse the JSON. `status == approved` → proceed to Step 8.
-- **Step 8.** Append a `## Completion Summary` section to task1.md (one-paragraph synthesis + hook results + review status). Check for task2.md: exists. Return to Step 1.
+- **Step 1a.** Check the four operational sections. `## Key files` and `## Testing strategy` are populated but `## Verification steps` reads `- (none)` → sparse, so dispatch `stride-copilot-lite:task-enricher` with task1.md's path. It fills that one section in place and leaves every other byte unchanged. **Then resolve the matrix against the enriched file:** `medium` complexity → the `full` row.
+- **Step 2.** Write `.stride-copilot-lite/lite-boundary` containing `stride-lite-boundary:before_task:docs/implementation/PENDING/add-notifications/task1.md`. That write is what fires `## before_task` (e.g. `git pull origin main`) — the skill body does NOT read or execute it. It exits 0 after 3s and the write proceeds. A failure here would block the write, triage via `stride-copilot-lite:hook-diagnostician`, and stop.
+- **Step 3.** The `full` row calls for exploration. Dispatch `stride-copilot-lite:task-explorer` with task1.md. It appends a `## Exploration Report` covering file state per key file, pattern matches (`Kanban.Boards.create_board` broadcast at boards.ex:42), related tests, and implementation notes.
+- **Step 3a.** The `full` row calls for planning. Outline the approach: modify the context module's success arm first, then add the subscriber test.
+- **Step 4.** Implement. Modify `lib/kanban/comments.ex` and `test/kanban/comments_test.exs`.
+- **Step 5.** Write the boundary marker again with `stride-lite-boundary:after_task:…/task1.md`. That fires `## after_task` (e.g. `mix test` and `mix credo --strict`), which exits 0 after 12s.
+- **Step 6.** The `full` row calls for review. Dispatch `stride-copilot-lite:task-reviewer`. It appends a `## Review Report` whose embedded JSON `status` is `approved`.
+- **Step 7.** Parse the JSON. `approved` → Step 8.
+- **Step 8.** Append `## Completion Summary` to task1.md — synthesis, hook results, review status, and the telemetry block:
 
-**Iteration 2 — task2.md (Subscribe to comment broadcasts in BoardLive.Show).**
+```markdown
+### Workflow telemetry
 
-- **Step 1.** Scan again. task1.md now has `## Completion Summary` → skip. task2.md has no `## Completion Summary` → next task is task2.md.
-- **Step 2–7.** Same pattern. The reviewer first returns `changes_requested` (the BoardLive subscribe wasn't filtering by board_id). The workflow loops back to Step 4 (iteration 1 of the review-loop), the implementation is fixed, Step 5/6/7 re-run, the reviewer now returns `approved` (iteration 2 — under the cap). Proceed to Step 8.
-- **Step 8.** Append `## Completion Summary` to task2.md. Check for task3.md: does NOT exist. This was the final task.
-- **Step 8 (continued).** Append `## Completion Summary` to `goal.md` with the goal-level synthesis: "Real-time notifications shipped via 2-task split — broadcast emission in the context module (task1), LiveView subscription in BoardLive.Show (task2). Both tasks reviewed and approved. All hooks completed cleanly."
-- **Step 8 (after_goal).** The append to `goal.md` in the previous sub-step auto-fires `.stride_lite.md` `## after_goal` as a PostToolUse hook (the path ends in `goal.md` and the body contains `## Completion Summary`) — the skill body does NOT execute it. PostToolUse cannot roll back the write, so `after_goal` is advisory: on success the goal is done; on failure the harness emits failure JSON for the user to inspect, and goal.md's Completion Summary remains.
-- **Step 8 (archive move).** Because `after_goal` succeeded (no failure JSON), archive the completed goal by moving its directory from `docs/implementation/PENDING/add-notifications/` to `docs/implementation/IMPLEMENTED/add-notifications/` — using `git mv` when the directory's files are tracked, else plain `mv`, with the collision-suffixing and guard rules described in **Step 8 sub-step 3** of the body (not repeated here). The move happens after the hook fires, so the hook saw the still-PENDING path.
+| Step | Dispatched | Duration | Reason |
+|---|:---:|---|---|
+| `enricher` | yes | — | — |
+| `before_task` | yes | 3s | — |
+| `explorer` | yes | — | — |
+| `planner` | yes | — | — |
+| `implementation` | yes | — | — |
+| `after_task` | yes | 12s | — |
+| `reviewer` | yes | — | — |
 
-**End state.** Both taskN.md files have full lifecycle sections (Description → ... → Exploration Report → Review Report → Completion Summary). goal.md has a `## Completion Summary` at EOF. The goal directory has been archived from `docs/implementation/PENDING/add-notifications/` to `docs/implementation/IMPLEMENTED/add-notifications/`. The user can navigate the archived goal directory and see exactly what happened, in order, in each file.
+```json
+{"workflow_steps":[
+  {"name":"enricher","dispatched":true},
+  {"name":"before_task","dispatched":true,"duration_seconds":3},
+  {"name":"explorer","dispatched":true},
+  {"name":"planner","dispatched":true},
+  {"name":"implementation","dispatched":true},
+  {"name":"after_task","dispatched":true,"duration_seconds":12},
+  {"name":"reviewer","dispatched":true}
+]}
+```
+```
+
+  Check for task2.md: exists. Return to Step 1.
+
+**Iteration 2 — task2.md (Subscribe to comment broadcasts in BoardLive.Show). `small` complexity, 2 key files.**
+
+- **Step 1.** task1.md now has a Completion Summary → skip. task2.md is next.
+- **Step 1a.** All four operational sections are populated → no enricher dispatch. Resolve the matrix: `small` with 2 distinct key files → the `explore-review` row. Explorer and reviewer run; **the planner does not**.
+- **Steps 2–7.** Same pattern as iteration 1, minus Step 3a. The reviewer first returns `changes_requested` (the BoardLive subscribe wasn't filtering by `board_id`), so the workflow loops back to Step 4, the fix is made, and Steps 5, 6 and 7 re-run — `after_task` therefore fires **twice** for this task, which is correct: the user's tests must run against the revised code. The second review returns `approved` at review-loop iteration 2, under the cap of 3.
+- **Step 8.** Append `## Completion Summary` to task2.md. Its telemetry records the planner skip with the rule that caused it:
+
+```markdown
+### Workflow telemetry
+
+| Step | Dispatched | Duration | Reason |
+|---|:---:|---|---|
+| `enricher` | no | — | All four operational sections already populated |
+| `before_task` | yes | 3s | — |
+| `explorer` | yes | — | — |
+| `planner` | no | — | Decision matrix: `small` complexity, 2 key files → `explore-review` row; planning is `full`-only |
+| `implementation` | yes | — | — |
+| `after_task` | yes | 9s | — |
+| `reviewer` | yes | — | — |
+
+```json
+{"workflow_steps":[
+  {"name":"enricher","dispatched":false,"reason":"All four operational sections already populated"},
+  {"name":"before_task","dispatched":true,"duration_seconds":3},
+  {"name":"explorer","dispatched":true},
+  {"name":"planner","dispatched":false,"reason":"Decision matrix: small complexity, 2 key files -> explore-review row; planning is full-only"},
+  {"name":"implementation","dispatched":true},
+  {"name":"after_task","dispatched":true,"duration_seconds":9},
+  {"name":"reviewer","dispatched":true}
+]}
+```
+```
+
+  Check for task3.md: does NOT exist. This was the final task.
+
+- **Step 8 (goal close-out).** Append `## Completion Summary` to `goal.md` with the goal-level synthesis: "Real-time notifications shipped via a 2-task split — broadcast emission in the context module (task1), LiveView subscription in BoardLive.Show (task2). Both tasks reviewed and approved. One planner step skipped by the decision matrix; all hooks completed cleanly."
+- **Step 8 (after_goal).** That append to `goal.md` auto-fires `## after_goal` as a PostToolUse hook — the path ends in `goal.md` and the body contains `## Completion Summary`. PostToolUse cannot roll back the write, so `after_goal` is advisory: on success the goal is done; on failure the harness emits failure JSON for the user to inspect and goal.md's summary remains.
+- **Step 8 (archive move).** Because `after_goal` succeeded, move the directory from `docs/implementation/PENDING/add-notifications/` to `docs/implementation/IMPLEMENTED/add-notifications/`, using `git mv` when the files are tracked, with the collision-suffixing and guard rules from Step 8 sub-step 3.
+- **Step 8 (clear the marker).** Delete `.stride-copilot-lite/.orchestrator_active`. This is the clean-completion exit; leaving it would keep hooks armed for up to four hours.
+
+**End state.** Both taskN.md files carry the full lifecycle (Description → … → Exploration Report → Review Report → Completion Summary with telemetry). goal.md has its own Completion Summary at EOF. The goal directory is archived under IMPLEMENTED, and the activation marker is gone. A reader can see exactly what happened, in order, in each file — including which steps did not run and which rule skipped them.
 
 ## Red flags — STOP
 

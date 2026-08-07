@@ -86,6 +86,8 @@ The workflow iterates each `taskN.md` in numeric order: select-next → `## befo
 | `medium` or `large` | any | yes | yes | yes |
 | absent or unreadable | any | yes | yes | yes |
 
+**Every task's Completion Summary records what actually ran.** All seven task-level steps — `enricher`, `before_task`, `explorer`, `planner`, `implementation`, `after_task`, `reviewer` — appear every time, each marked dispatched or skipped, with a duration where one was measured and a reason naming the rule when it was not. A skipped step is recorded, never omitted: omission is exactly the shortcut the record exists to catch, and a summary that simply does not mention the explorer is indistinguishable from one where it was forgotten. It renders as a table for you plus a fenced JSON block for tooling.
+
 An unreadable signal takes the full branch — absence of evidence is not evidence of a small task. Because this port fires `## before_task` / `## after_task` on the workflow's boundary writes, a skipped step also skips its hook, so on the `skip-all` row your `git pull` and test commands do not run for that task. Every skip is recorded in the task's `## Completion Summary` along with the rule that caused it, so a skip is never indistinguishable from a bug. The matrix mirrors the Claude Code plugin's, and `lib/select_workflow_branch.md` is its normative specification.
 
 ### Automatic enrichment of sparse task files

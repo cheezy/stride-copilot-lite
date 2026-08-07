@@ -856,6 +856,112 @@ else
   nope "advisory triage" "an optional mention on the after_goal path" "not found"
 fi
 
+# ------------------------------------------------------------------
+# Workflow telemetry vocabulary (W2027)
+# ------------------------------------------------------------------
+
+echo ""
+echo "workflow telemetry"
+
+WF="$REPO_ROOT/skills/stride-copilot-lite-workflow/SKILL.md"
+
+# The seven names the telemetry block documents, read off the vocabulary table
+# in Step 8 rather than hardcoded here — a list restated in the test would drift
+# from the doc exactly as the doc could drift from the loop.
+DOC_STEPS=$(awk '
+  /^\| Name \| Step \| Recorded as dispatched when \|$/ { intbl = 1; next }
+  intbl && /^\| `/ { print; next }
+  intbl && !/^\|/ { exit }
+' "$WF" | sed -n 's/^| `\([a-z_]*\)`.*/\1/p')
+DOC_COUNT=$(printf '%s\n' "$DOC_STEPS" | grep -c '[a-z]')
+
+assert_eq "telemetry vocabulary documents seven steps" "$DOC_COUNT" "7"
+
+# Every documented name must correspond to a step the loop actually performs.
+# The mapping is stated in the same table's Step column, so verify each one
+# points at a heading that exists.
+DOC_ANCHORS=$(awk '
+  /^\| Name \| Step \| Recorded as dispatched when \|$/ { intbl = 1; next }
+  intbl && /^\| `/ { print; next }
+  intbl && !/^\|/ { exit }
+' "$WF" | sed -n 's/^| `[a-z_]*` | \([0-9a-z]*\) |.*/\1/p')
+
+missing_step=""
+for anchor in $DOC_ANCHORS; do
+  grep -q "^### Step ${anchor} —" "$WF" || missing_step="$missing_step $anchor"
+done
+if [ -z "$missing_step" ] && [ -n "$DOC_ANCHORS" ]; then
+  ok "every telemetry name maps to a step heading that exists"
+else
+  nope "telemetry step mapping" "each name maps to an existing '### Step N —'" "missing:$missing_step"
+fi
+
+# No stride-copilot-only names. after_doing and before_review are the full
+# plugin's hook names and do not exist here; recording them would produce
+# telemetry comparable to nothing.
+if printf '%s\n' "$DOC_STEPS" | grep -qxE 'after_doing|before_review'; then
+  nope "telemetry vocabulary" "no stride-copilot-only names" "after_doing/before_review present"
+else
+  ok "telemetry vocabulary contains no stride-copilot-only names"
+fi
+
+# after_goal is goal-level, fires once per goal, and belongs in goal.md's
+# summary — not in a task's telemetry.
+if printf '%s\n' "$DOC_STEPS" | grep -qx 'after_goal'; then
+  nope "telemetry vocabulary" "after_goal excluded (goal-level)" "after_goal present"
+else
+  ok "telemetry vocabulary excludes the goal-level after_goal"
+fi
+
+# --- Every example block lists all seven names ---
+# Two in the walkthrough plus the rendering example in Step 8. Each must be
+# complete: an example that omits a name teaches the omission the rule forbids.
+EXAMPLE_BLOCKS=$(grep -c '{"workflow_steps":\[' "$WF")
+assert_eq "three example telemetry blocks are present" "$EXAMPLE_BLOCKS" "3"
+
+incomplete=""
+blocknum=0
+while IFS= read -r startline; do
+  blocknum=$(( blocknum + 1 ))
+  body=$(sed -n "${startline},$(( startline + 12 ))p" "$WF")
+  for name in $DOC_STEPS; do
+    printf '%s' "$body" | grep -q "\"name\":\"$name\"" || incomplete="$incomplete block$blocknum:$name"
+  done
+done <<< "$(grep -n '{"workflow_steps":\[' "$WF" | cut -d: -f1)"
+
+if [ -z "$incomplete" ]; then
+  ok "every example block lists all seven step names"
+else
+  nope "example telemetry completeness" "all seven names in each block" "$incomplete"
+fi
+
+# --- Skip reasons name a condition, not the outcome ---
+# A reason that merely restates the skip is the failure mode the rule targets,
+# so assert the examples model the right shape rather than the wrong one.
+BAD_REASONS=$(grep -o '"reason":"[^"]*"' "$WF" | grep -icE '"reason":"(was )?skipped"|"reason":"(the )?step (was )?skipped"' || true)
+assert_eq "no example reason merely restates the skip" "$BAD_REASONS" "0"
+
+if grep -q '"reason":"Decision matrix' "$WF"; then
+  ok "an example skip reason names the matrix rule that fired"
+else
+  nope "skip reason shape" "an example naming the matrix rule" "not found"
+fi
+
+# --- Both renderings are required, with the table primary ---
+if grep -q '| Step | Dispatched | Duration | Reason |' "$WF" && grep -q '{"workflow_steps":\[' "$WF"; then
+  ok "telemetry renders as both a table and a fenced JSON block"
+else
+  nope "telemetry rendering" "a table and a JSON block" "one is missing"
+fi
+
+# --- Telemetry carries no command output or environment values ---
+# The Completion Summary is committed; the contract must say so explicitly.
+if grep -q 'No command output, no environment values, no paths outside the project' "$WF"; then
+  ok "telemetry contract forbids command output and environment values"
+else
+  nope "telemetry redaction rule" "an explicit no-output/no-env rule" "not found"
+fi
+
 # Summary
 # ------------------------------------------------------------------
 
