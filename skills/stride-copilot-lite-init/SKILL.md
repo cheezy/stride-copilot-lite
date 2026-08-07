@@ -134,6 +134,24 @@ your-email@example.com
 - **Don't make any API calls.** No `curl`, no Stride client, no network.
 - **Don't require `stride-copilot-lite-init` to have run before the other surface skills.** `stride-copilot-lite-create-goal` and `stride-copilot-lite-create-task` must continue to work without `.stride_lite.md` present.
 
+## Red flags — STOP
+
+If you catch yourself thinking any of these, go back to the documented step:
+
+- **"`.stride_lite.md` already exists but looks like a stub — I'll overwrite it."** No. Refuse without `--force`. What looks like a stub may be a config whose hook sections the user has deliberately left empty.
+- **"I'll run the hook sections to check they work."** No. This skill is a pure scaffolder. The harness fires the hooks via `hooks/hooks.json`; executing them here would run the user's commands at a moment nothing expects.
+- **"I'll rename the config file to match this plugin's name."** No. `.stride_lite.md` is a compatibility promise — the same file works with the Claude Code plugin, and the README says so.
+
+## Rationalization table
+
+| "I'll just…" | Reality | Consequence if you do |
+|---|---|---|
+| "…overwrite the existing config; it's nearly empty." | The refusal is the contract; `--force` is how a user opts in. | You destroy hook commands someone wrote, and the next workflow run silently does something different. |
+| "…execute the sections to verify the scaffold." | This skill never executes hook content. | The user's `git pull` or test suite runs at scaffold time, outside any workflow and with no marker active. |
+| "…rename the file to `.stride_copilot_lite.md` for consistency." | The filename and its four section names are a byte-identical-config promise to stride-lite users. | Every migrated config stops being found, and the hooks silently become no-ops. |
+| "…rename a section to something clearer." | The executor matches the four canonical section names exactly. | The renamed section is never found and its commands never run — a silent no-op, not an error. |
+| "…add a fifth section for a hook I think is useful." | The executor routes three sections plus `## email`; a fifth is dead text. | A user writes commands into it and reasonably expects them to run. Nothing ever does. |
+
 ## Edge cases
 
 - **`.stride_lite.md` exists as a regular file** — refuse without `--force`; overwrite with `--force` (the `rm -rf` step in the collision-check block handles the unlikely directory case as well).

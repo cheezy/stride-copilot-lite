@@ -213,6 +213,24 @@ That is the entire output. The skill does not chain into any follow-up.
 - **Do not hardcode `docs/implementation/PENDING`.** Always route through `$OUTPUT_DIR` after `parse_args`. The `--output-dir` flag MUST work.
 - **Do not POST to any API.** No `curl https://...`, no Stride client, no other network call. The skill writes one markdown file and prints a summary.
 
+## Red flags — STOP
+
+If you catch yourself thinking any of these, go back to the documented step:
+
+- **"This prompt is really 2–3 tasks — I'll write them all into one file."** No. This skill produces exactly one task file. If the work is genuinely a goal, say so and point the user at `the stride-copilot-lite-create-goal skill` rather than smuggling a decomposition into a single file.
+- **"The file already exists — I'll overwrite it."** No. Resolve a unique path. An existing task file may already carry an Exploration Report, a Review Report or a Completion Summary from a run in progress.
+- **"I'll adjust the template for the single-task case."** No. It is reproduced verbatim from `stride-copilot-lite-create-goal` precisely so single-task output and a goal's `taskN.md` are indistinguishable in shape.
+
+## Rationalization table
+
+| "I'll just…" | Reality | Consequence if you do |
+|---|---|---|
+| "…put three tasks in one file; the user only asked once." | One prompt, one task file. Multi-task work is the goal flow's job. | The workflow drives one file as one task, so two thirds of the work is never explored, reviewed or summarized. |
+| "…diverge the template slightly; this is a standalone file." | The never-diverge rule is a hard cross-skill contract asserted by `test/smoke.sh`. | Task markdown whose shape depends on which skill made it, which the workflow then reads inconsistently. |
+| "…overwrite the existing file; it's probably stale." | The resolver suffixes rather than overwrites, deliberately. | You destroy a task file that may hold a completed run's Review Report and Completion Summary. |
+| "…omit the metadata line for a one-off task." | The decision matrix reads complexity from that line. | The task always resolves to the `full` branch — two dispatches and two hook runs for a one-line fix. |
+| "…leave `## Key files` empty rather than `- (none)`." | An absent section and an empty one mean different things to the matrix. | An absent section routes to `full`; an empty one routes to `skip-all`. Guessing gets you the wrong one. |
+
 ## Edge cases
 
 - **Empty requirements directory** — `load_requirements_dir` returns empty stdout; the agent decomposes from the prompt alone and notes the absence in `decomposition_notes`. Proceed.

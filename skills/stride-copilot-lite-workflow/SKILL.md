@@ -918,6 +918,53 @@ A two-task goal at `docs/implementation/PENDING/add-notifications/` containing `
 
 **End state.** Both taskN.md files carry the full lifecycle (Description → … → Exploration Report → Review Report → Completion Summary with telemetry). goal.md has its own Completion Summary at EOF. The goal directory is archived under IMPLEMENTED, and the activation marker is gone. A reader can see exactly what happened, in order, in each file — including which steps did not run and which rule skipped them.
 
+## Rationalization table
+
+Every row is an excuse an agent working *this* plugin has a real reason to reach for, the fact that refutes it, and what actually happens if you act on it. If a thought below matches one you are having, the rest of the row is the answer.
+
+| "I'll just…" | Reality | Consequence if you do |
+|---|---|---|
+| "…resolve the decision matrix now; the enricher can run after." | A sparse task file lists **zero** key files, so it takes the `skip-all` row. | The one task whose metadata was too thin to judge gets no exploration and no review — exactly inverted. |
+| "…skip the explorer, this task is obviously small." | The matrix decides from complexity and key-files count, not from your read. | An unrecorded skip no one can trace to a rule; the audit trail the telemetry exists for is gone. |
+| "…dispatch the reviewer anyway even though the matrix said `skip-all`." | Deviating *toward* more work is still deviating. | The Completion Summary records a step the matrix did not call for, and the next reader cannot tell rule from whim. |
+| "…write the Completion Summary; the reviewer's `changes_requested` looked minor." | Step 7 is binary: `approved` proceeds, anything else loops. | The review loop is defeated and the task ships unreviewed — the single thing the loop exists to prevent. |
+| "…force-approve; the reviewer keeps raising the same issue and we're at the cap." | Hitting the cap is a terminal stop with the issue surfaced, not a formality to clear. | An unresolved defect ships with a Completion Summary asserting it was reviewed. |
+| "…retry the boundary write; the `before_task` hook is blocking me." | The block **is** the hook working. A failing blocking hook stops the workflow. | You defeat the user's own quality gate — their `git pull` or test suite failed and you proceeded anyway. |
+| "…skip the marker write for this small task to save the hook run." | On `skip-all` the matrix already skips it. Outside that row the marker write is what fires the hook. | The user's tests silently do not run for a task that was supposed to get them. |
+| "…leave the activation marker; the next run will overwrite it." | Every exit clears it, and a stale one keeps hooks armed for up to four hours. | An unrelated edit in the same project later runs the user's hook commands outside any workflow. |
+| "…supply the authorized-and-non-production affirmative; it's obviously a localhost dev app." | **Security-bearing.** The affirmative comes from the user or not at all. Inferring it *is* supplying it. | A session is dispatched against a system nobody authorized — the one failure this control exists to prevent. |
+| "…mark the consideration mitigated; the verdict set came back malformed and the code looks fine." | **Security-bearing.** Inability to confirm mitigation is not confirmation. | A security implication the task author wrote down ships unaddressed behind a green review. |
+| "…note the drafted check passes; it obviously would." | Hardening runs nothing. Nothing has passed. | Fabricated test output in a committed summary, which is worse than no check at all. |
+| "…move the drafted check into the test tree; running the whole suite is slow." | A check for an unfixed bug is *supposed* to fail. | The reviewer re-run this step requires re-fires `## after_task` against a red tree and takes the whole goal drive down. |
+| "…move the goal to IMPLEMENTED; `after_goal` only failed on a flaky notification." | The guard exists so the user can inspect the failure where it happened. | The evidence is archived away from the person who needs to act on it. |
+| "…fill in this task's `## Why`; it's thin and I know what it means." | The enricher owns eleven derivable sections. Intent is not one of them. | You overwrite what a human said the task *is* with what you inferred it should be. |
+| "…fail the run; the exploratory plugin isn't installed." | Every gated step falls through to a clean skip. | An optional integration becomes a hard dependency, and the plugin stops working for everyone who did not install a sibling. |
+
+## Quick reference card
+
+A compressed index, not a second copy of the loop. Each line is the one thing about that step most easily got wrong.
+
+```
+STEP 0   marker      write .stride-copilot-lite/.orchestrator_active — no marker, no hooks
+STEP 1   select      first taskN.md with no ## Completion Summary; a numbering gap is a hard stop
+STEP 1a  enrich      sparse? dispatch enricher — THEN resolve the matrix, never before
+         matrix      small+0-1 → skip-all | small+2+ → explore-review | medium/large/unknown → full
+STEP 2   before_task write the boundary marker (skip-all skips it, and its hook with it)
+STEP 3   explorer    dispatch unless skip-all
+STEP 3a  planner     full row only
+STEP 4   implement   the only step that writes code
+STEP 5   after_task  write the boundary marker again; re-fires on every review-loop pass
+STEP 6   reviewer    dispatch unless skip-all
+STEP 6a  explore     gated: plugin + manual tests + the user's affirmative. Skip is free
+STEP 6b  harden      gated: drafts stay staged unless the whole suite runs clean
+STEP 6c  security    gated: real considerations only. Unconfirmable ≠ mitigated
+STEP 7   decide      approved → 8 | anything else → 4, under the cap. One increment per pass
+STEP 8   summary     synthesis + telemetry (all 7 names) + skips with their rules
+         final task  → goal.md summary → after_goal → archive move → CLEAR THE MARKER
+```
+
+**Five exits clear the marker:** clean completion, goal-already-complete, a malformed goal directory, an explorer or reviewer dispatch failure, and the review-iteration cap. A blocking hook failure stops the workflow too — clear it there as well.
+
 ## Red flags — STOP
 
 If you catch yourself thinking any of these, go back to the documented step:

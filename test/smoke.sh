@@ -1226,6 +1226,121 @@ else
   nope "prompt-injection framing" "inputs framed as data, not instructions" "not found"
 fi
 
+# ------------------------------------------------------------------
+# Anti-rationalization scaffolding (W2030)
+# ------------------------------------------------------------------
+
+echo ""
+echo "anti-rationalization scaffolding"
+
+SKILL_FILES="stride-copilot-lite-workflow stride-copilot-lite-create-goal stride-copilot-lite-create-task stride-copilot-lite-init"
+
+for name in $SKILL_FILES; do
+  f="$REPO_ROOT/skills/$name/SKILL.md"
+  if grep -qiE '^## Red flags' "$f"; then
+    ok "$name has a Red flags section"
+  else
+    nope "$name Red flags" "a '## Red flags' section" "not found"
+  fi
+  if grep -qiE '^## Rationalization table' "$f"; then
+    ok "$name has a Rationalization table"
+  else
+    nope "$name Rationalization table" "a '## Rationalization table' section" "not found"
+  fi
+  # Three columns: the excuse, the reality that refutes it, the consequence.
+  if grep -qF '| "I'"'"'ll just…" | Reality | Consequence if you do |' "$f"; then
+    ok "$name table has the three-column header"
+  else
+    nope "$name table header" "excuse / reality / consequence" "not found"
+  fi
+done
+
+# The workflow skill additionally carries a compressed index.
+if grep -qiE '^## Quick reference card' "$REPO_ROOT/skills/stride-copilot-lite-workflow/SKILL.md"; then
+  ok "the workflow skill has a Quick reference card"
+else
+  nope "Quick reference card" "a '## Quick reference card' section" "not found"
+fi
+
+# --- No row may reference a surface this plugin does not have ---
+# An irrelevant row trains agents to skim the table, which costs more than the
+# row is worth. These are the three stride-copilot surfaces most likely to be
+# copied in by accident.
+bad_surface=""
+for name in $SKILL_FILES; do
+  f="$REPO_ROOT/skills/$name/SKILL.md"
+  TABLE_ROWS=$(grep -F '| "…' "$f" || true)
+  for token in 'POST /api' 'root key' 'review_queue'; do
+    printf '%s' "$TABLE_ROWS" | grep -qF "$token" && bad_surface="$bad_surface $name:$token"
+  done
+done
+if [ -z "$bad_surface" ]; then
+  ok "no table row references an API endpoint, root key or review queue"
+else
+  nope "irrelevant table rows" "no stride-copilot-only surfaces" "$bad_surface"
+fi
+
+# --- Every row has three cells and a non-trivial consequence ---
+THIN_ROWS=0
+for name in $SKILL_FILES; do
+  f="$REPO_ROOT/skills/$name/SKILL.md"
+  while IFS= read -r row; do
+    [ -z "$row" ] && continue
+    cells=$(printf '%s' "$row" | awk -F'|' '{print NF-2}')
+    conseq=$(printf '%s' "$row" | awk -F'|' '{print $4}' | sed 's/^ *//;s/ *$//')
+    if [ "$cells" -ne 3 ] || [ "${#conseq}" -lt 25 ]; then
+      THIN_ROWS=$(( THIN_ROWS + 1 ))
+    fi
+  done <<< "$(grep -F '| "…' "$f" || true)"
+done
+assert_eq "every rationalization row has three cells and a substantive consequence" "$THIN_ROWS" "0"
+
+# Guard the vacuous pass: if the row extraction found nothing, the check above
+# passes trivially.
+ROW_TOTAL=0
+for name in $SKILL_FILES; do
+  n=$(grep -cF '| "…' "$REPO_ROOT/skills/$name/SKILL.md" || true)
+  ROW_TOTAL=$(( ROW_TOTAL + n ))
+done
+if [ "$ROW_TOTAL" -ge 20 ]; then
+  ok "the four tables carry $ROW_TOTAL rationalization rows in total"
+else
+  nope "rationalization row count" "at least 20 rows across four tables" "$ROW_TOTAL"
+fi
+
+# --- The two security-bearing rows must be present ---
+# These restate controls documented elsewhere; a table that quietly loses them
+# is how a control gets softened by an edit that reads as tidying.
+WFS="$REPO_ROOT/skills/stride-copilot-lite-workflow/SKILL.md"
+WF_ROWS=$(grep -F '| "…' "$WFS")
+if printf '%s' "$WF_ROWS" | grep -qi 'affirmative' && printf '%s' "$WF_ROWS" | grep -qi 'Security-bearing'; then
+  ok "the affirmative row is present and marked security-bearing"
+else
+  nope "affirmative row" "a security-bearing row on the affirmative" "not found"
+fi
+
+if printf '%s' "$WF_ROWS" | grep -qi 'mitigat'; then
+  ok "the unconfirmable-verdict row is present"
+else
+  nope "security verdict row" "a row refusing to mark an unconfirmable verdict mitigated" "not found"
+fi
+
+# AGENTS.md must say those rows are not editorial.
+if grep -q 'not editorial' "$REPO_ROOT/AGENTS.md"; then
+  ok "AGENTS.md records that the safety rows are not editorial"
+else
+  nope "safety-row rule" "an AGENTS.md note that safety rows are not editorial" "not found"
+fi
+
+# --- The card is an index, not a second copy of the loop ---
+CARD=$(awk '/^## Quick reference card/{f=1} /^## Red flags/{f=0} f' "$WFS")
+CARD_LINES=$(printf '%s\n' "$CARD" | grep -c 'STEP')
+if [ "$CARD_LINES" -ge 10 ] && [ "$CARD_LINES" -le 20 ]; then
+  ok "the quick reference card indexes the loop in $CARD_LINES lines"
+else
+  nope "card size" "a compressed index of 10-20 STEP lines" "$CARD_LINES"
+fi
+
 # Summary
 # ------------------------------------------------------------------
 
