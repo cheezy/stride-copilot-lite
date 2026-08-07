@@ -1,7 +1,7 @@
 {
   "name": "stride-copilot-lite",
-  "description": "Lightweight companion plugin to Stride kanban — produces Stride-shaped goal and task markdown documents on disk from a free-text prompt plus an optional requirements directory. No API calls, no kanban setup, no auth files.",
-  "version": "0.3.0",
+  "description": "Lightweight companion plugin to Stride kanban \u2014 produces Stride-shaped goal and task markdown documents on disk from a free-text prompt plus an optional requirements directory. No API calls, no kanban setup, no auth files.",
+  "version": "0.4.0",
   "author": {
     "name": "Jeff Morgan",
     "email": "cheezy@letstango.ca"
@@ -9,8 +9,17 @@
   "homepage": "https://github.com/cheezy/stride-copilot-lite",
   "repository": "https://github.com/cheezy/stride-copilot-lite",
   "license": "MIT",
-  "keywords": ["stride", "stride-lite", "kanban", "tasks", "ai-agents", "workflow"],
+  "keywords": [
+    "stride",
+    "stride-lite",
+    "kanban",
+    "tasks",
+    "ai-agents",
+    "workflow"
+  ],
   "agents": "agents/",
-  "skills": ["skills/"],
+  "skills": [
+    "skills/"
+  ],
   "hooks": "hooks/hooks.json"
 }

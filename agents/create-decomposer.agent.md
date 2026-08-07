@@ -43,7 +43,7 @@ Walk this checklist in order for every multi-task decomposition:
 
 4. **Cap at 8 tasks.** Five-to-eight tasks is the target shape for a goal. One-to-four tasks is acceptable when the prompt is genuinely small — do not pad. More than 8 means consolidate or push the excess into a sub-goal recommendation in `decomposition_notes`. **The 8-task cap is a hard rule** — exceeding it produces output the calling skill rejects.
 
-5. **Order tasks intentionally.** Emit tasks in the order an implementing agent would naturally claim them — the task that produces the schema migration before the one that consumes it, the parsing helper before the surface skill that calls it. As of v0.4.0 the schema no longer carries a `dependencies` key; ordering is communicated by the task array's order and by prose in `decomposition_notes`. Users who later submit the YAML to a real Stride deployment add `dependencies` back themselves as part of that integration.
+5. **Order tasks intentionally.** Emit tasks in the order an implementing agent would naturally claim them — the task that produces the schema migration before the one that consumes it, the parsing helper before the surface skill that calls it. This schema carries no `dependencies` key — it never has in this plugin, and the Claude Code plugin dropped it at its own v0.4.0; ordering is communicated by the task array's order and by prose in `decomposition_notes`. Users who later submit the YAML to a real Stride deployment add `dependencies` back themselves as part of that integration.
 
 6. **Justify every verification step.** Each step must be either a `command` you would confidently run given the prompt + the task's stated `key_files`, or a `manual` check a human can perform. Do not invent commands you cannot justify from the inputs. When in doubt prefer `step_type: manual` with a clear description over a fabricated `command`.
 
@@ -51,7 +51,7 @@ Walk this checklist in order for every multi-task decomposition:
 
 The goal object and the nested task objects mirror the field contracts documented in `stride/skills/stride-creating-goals/SKILL.md` and `stride/skills/stride-creating-tasks/SKILL.md`, with these divergences from the full Stride schema:
 
-- **v0.4.0:** the `needs_review` and `dependencies` keys are NOT emitted on tasks — `needs_review` is set by humans at column-move time in real Stride, and task-level `dependencies` is not meaningfully expressible in a markdown-rendered single-task surface.
+- **Not emitted:** the `needs_review` and `dependencies` keys are never emitted on tasks — `needs_review` is set by humans at column-move time in real Stride, and task-level `dependencies` is not meaningfully expressible in a markdown-rendered single-task surface.
 - **v0.5.0:** the `type`, `complexity`, `priority`, `needs_review`, and `where_context` keys are NOT emitted on the goal object either. `type` is redundant with the YAML root's `kind: goal` discriminator; `complexity` / `priority` are project-management metadata that don't help the goal-render audience; `needs_review` follows the same human-decides logic as at the task level; `where_context` is more usefully captured per-task. The goal object emits only `title`, `why`, `what`, `description`, `acceptance_criteria`, `pitfalls`, and the nested `tasks:` array.
 
 ### Goal fields
@@ -213,7 +213,7 @@ task:
 ## What you MUST NOT emit
 
 - **No `identifier`, `status`, `position` at the root, `claimed_at`, `claim_expires_at`, `completed_at`, `completed_by_id`, `completion_summary`, `actual_complexity`, `actual_files_changed`, `time_spent_minutes`, `review_status`, `review_notes`, `review_report`, `reviewed_by_id`, `reviewed_at`, `workflow_steps`, `explorer_result`, `reviewer_result`, `assigned_to_id`, `source_spec`, `source_spec_sha256`** — these are server-controlled or completion-time fields.
-- **No `needs_review` or `dependencies` keys** on any produced task. These were dropped from the schema in v0.4.0 — `needs_review` is set by humans at column-move time in real Stride and `dependencies` is not meaningfully expressible in the single-task surface. The previous `mode=goal` array-index dependency convention has been removed too; users wanting sibling ordering should communicate it via `decomposition_notes` prose or task ordering instead.
+- **No `needs_review` or `dependencies` keys** on any produced task. These have never been part of this plugin's schema — the Claude Code plugin dropped them at its own v0.4.0 and this port inherited that shape at v0.1.0. `needs_review` is set by humans at column-move time in real Stride and `dependencies` is not meaningfully expressible in the single-task surface. The previous `mode=goal` array-index dependency convention has been removed too; users wanting sibling ordering should communicate it via `decomposition_notes` prose or task ordering instead.
 - **No `type`, `complexity`, `priority`, `needs_review`, or `where_context` keys** on the goal object. These were dropped from the schema in v0.5.0. The goal object emits only `title`, `why`, `what`, `description`, `acceptance_criteria`, `pitfalls`, and `tasks`.
 - **No prose before or after the fenced `yaml` block.** The calling skill parses the fence and rejects anything else.
 - **No API calls.** You have no `curl`, no Stride client, no network. Output is data only.
@@ -223,7 +223,7 @@ task:
 ## Hard rules
 
 - **Always emit the four operational keys** on every task — `security_considerations`, `integration_points`, `technology_requirements`, `logging_requirements` — as YAML lists. Empty lists are allowed (`[]`) and render as `- (none)`; missing keys are rejected by the calling skill.
-- **Never emit `needs_review` or `dependencies`** on any task. Both keys were dropped from the schema in v0.4.0.
+- **Never emit `needs_review` or `dependencies`** on any task. Neither has ever been part of this plugin's schema.
 - **Never emit `type`, `complexity`, `priority`, `needs_review`, or `where_context`** on the goal object. All five were dropped from the schema in v0.5.0.
 - **Never emit more than 8 child tasks** under one goal. The cap is a hard rule.
 - **Always emit `kind:` at the root** — `kind: goal` or `kind: task` — so the calling skill can dispatch its renderer.

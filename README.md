@@ -135,6 +135,52 @@ When the section carries **real** entries (a `(none)` placeholder or an entry be
 
 **Every failure mode is fail-closed**, because this step is itself a security control: no plugin means no verdict recorded rather than a passing one, and a malformed or empty verdict set is treated as unaddressed rather than downgraded to passed. Inability to confirm mitigation is never the same as confirming it.
 
+## Subagents
+
+Five agents ship with the plugin. You never invoke them directly — the workflow dispatches them when its decision matrix and gates call for it — but knowing what each does makes a Completion Summary readable.
+
+| Agent | Runs when | What it does |
+|---|---|---|
+| `create-decomposer` | You ask for a goal or a task | Turns your prompt plus any requirements docs into the structured decomposition the create skills render. It has **no codebase access at all** — which is why the sections it writes are informed guesses, and why the enricher exists. |
+| `task-enricher` | A task's operational sections are empty or `(none)` | Explores your codebase and fills in the derivable sections in place. Never touches the title, `## Description`, `## Why` or `## What` — those are intent, not derived context. |
+| `task-explorer` | The matrix calls for exploration | Reads the task's key files and patterns, then appends an `## Exploration Report`. |
+| `task-reviewer` | The matrix calls for review | Reads the task file and `git diff HEAD`, then appends a `## Review Report` whose embedded JSON drives the review loop. |
+| `hook-diagnostician` | A blocking hook fails | Turns the hook's structured failure JSON into a prioritized fix plan instead of a raw dump. It never re-runs or repairs the failing command. |
+
+Two more agents can be dispatched from **other plugins** when you have them installed — an exploratory-testing explorer and a security reviewer. Both are optional and both gate to a clean skip when absent.
+
+## What gets written where
+
+A goal drive produces this layout, all of it plain markdown you can read and edit:
+
+```
+docs/implementation/PENDING/<slug>/     the goal, while it is in flight
+  goal.md                               why/what + a link index to each task
+  task1.md                              one file per task, each accumulating:
+  task2.md                                ## Exploration Report   (from task-explorer)
+  ...                                     ## Review Report        (from task-reviewer)
+                                          ## Completion Summary   (synthesis + telemetry)
+
+docs/implementation/IMPLEMENTED/<slug>/ where the goal moves when every task is done
+
+.stride_lite.md                         your hook commands (you write this)
+.stride-copilot-lite/                   transient run state — gitignore it
+.exploratory/                           session artifacts, if you use that plugin — gitignore it
+```
+
+Nothing is deleted and nothing is overwritten: a name collision resolves to `<slug>-2`, `<slug>-3` and so on.
+
+## What this plugin does not do
+
+- **No network calls.** No API client, no telemetry, no update check. The only thing that can reach the network is a command you wrote in `.stride_lite.md`.
+- **No kanban server, no accounts, no auth files.** There is nothing to sign into and nothing to configure beyond `.stride_lite.md`.
+- **No credential handling.** It never reads, stores or transmits credentials, and the agents that write files are forbidden from copying secret-bearing material into them.
+- **No writes outside your project** — the goal directory you name, `.stride_lite.md`, and the two transient state directories above.
+- **No silent overwrites.** Existing goal directories, task files and configs are never clobbered; `init` refuses without `--force`.
+- **No questions mid-flow.** The workflow asks at activation and then runs to completion or stops with a reason.
+
+See [SECURITY.md](SECURITY.md) for the execution model in full.
+
 ## Configuration
 
 stride-copilot-lite reads a project-local `.stride_lite.md` config file at the repository root. The file has four canonical sections, each a fenced bash block whose body the harness runs at the corresponding lifecycle point:
@@ -211,16 +257,17 @@ You do NOT need `.stride_lite.md` to use the create/init skills — only the `st
 
 ## Migration from stride-lite
 
-Users coming from the Claude Code [stride-lite](https://github.com/cheezy/stride-lite) plugin can re-use their existing `.stride_lite.md` config — the file shape is byte-identical across both plugins.
+**Your existing `.stride_lite.md` works unchanged.** The filename and its four canonical sections (`## email`, `## before_task`, `## after_task`, `## after_goal`) are identical across both plugins, and the executor parses them the same way. Copy the file across and it runs.
+
+**Your goal directories work in both directions too.** The on-disk artifacts — goal directories, task markdown files and the embedded per-task template — are byte-identical, so a goal created by stride-lite can be driven by this plugin's workflow and vice versa. That is verified rather than asserted: both plugins' `fixtures/expected-output/` files diff clean against each other.
 
 Differences to expect:
 
-- **No slash commands.** Claude Code stride-lite ships `/stride-lite:create-goal`, `/stride-lite:create-task`, `/stride-lite:init`. Copilot has no equivalent surface. Replace those slash calls with the natural-language activation phrases in the Skills section below.
-- **Subagent identities renamed.** Cross-references in `.stride_lite.md` hooks, in your own scripts, or in CI to `stride-lite:task-explorer` / `stride-lite:task-reviewer` need to be renamed to `stride-copilot-lite:task-explorer` / `stride-copilot-lite:task-reviewer` for the Copilot port. The `.stride_lite.md` hook sections themselves are agnostic to the plugin name and need no change.
-- **`hooks/hooks.json` matchers.** stride-lite uses Claude Code matcher names (`Agent`, `Edit`, `Write`); stride-copilot-lite adds the Copilot lowercase forms via regex alternation (`Edit|edit`, `Write|create`). Both runtimes are covered by the same hooks.json.
-- **Dormant before_task/after_task on Copilot.** See the Copilot CLI hook caveat above. Under Claude Code these still fire normally.
-
-The on-disk artifacts produced by both plugins (goal directories, task markdown files, the embedded task template) are byte-identical — a goal directory created by stride-lite can be driven by `stride-copilot-lite:stride-copilot-lite-workflow` and vice versa.
+- **No slash commands.** Claude Code stride-lite ships `/stride-lite:create-goal`, `/stride-lite:create-task`, `/stride-lite:init`. Copilot has no equivalent surface — use the natural-language activation phrases in the Skills section instead.
+- **Subagent identities are prefixed differently.** Cross-references in your scripts or CI to `stride-lite:task-explorer` / `stride-lite:task-reviewer` become `stride-copilot-lite:task-explorer` / `stride-copilot-lite:task-reviewer`. The `.stride_lite.md` hook sections themselves are agnostic to the plugin name and need no change.
+- **`hooks/hooks.json` matchers.** stride-lite uses Claude Code's matcher names (`Agent`, `Edit`, `Write`); this plugin adds Copilot's lowercase forms by regex alternation (`Edit|edit`, `Write|create`), so one hooks.json covers both runtimes.
+- **The hooks fire at a different moment here, and that is deliberate.** Copilot CLI emits no skill- or agent-dispatch event, so `before_task` and `after_task` cannot key on one. This plugin's workflow writes a boundary marker instead and the harness intercepts that write. Your hook *commands* are unaffected; only the trigger differs.
+- **The scaffolded template is not byte-identical, though your config is.** `stride-copilot-lite-init` writes a template carrying this plugin's variable documentation and example comments, which stride-lite's does not have. That affects a **newly scaffolded** file only — an existing config remains fully compatible, which is the promise that actually matters when migrating.
 
 ## Running the test suites
 
@@ -233,6 +280,8 @@ pwsh -File hooks/test-stride-copilot-lite-hook.ps1   # the PowerShell hook execu
 ```
 
 Each exits `0` when every assertion passes and `1` on the first failure, printing the failing case with its expected and actual values to stderr. Run all three before opening a PR.
+
+**What has been verified, and where.** Both suites are run on macOS — bash 5 and PowerShell 7 (`pwsh`). The PowerShell executor has **not** been exercised on Windows PowerShell on a Windows host; it is written for it and the suite passes under `pwsh`, but that is a different runtime and saying otherwise would overstate it. If you run it on Windows, a passing or failing report is genuinely useful.
 
 **Both hook suites are needed, not one or the other.** They exercise two independent implementations of the same contract, and each has caught bugs the other could not see. The bash suite additionally runs a **cross-executor parity check**: it feeds a shared fixture set through both executors and diffs the emitted JSON, so a change that alters one runtime's behaviour without the other fails there rather than in the field. On a host without `pwsh` that check reports a **skip with a reason** rather than passing silently — an absent run stays distinguishable from a passing one.
 

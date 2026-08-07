@@ -2,7 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
-## [Unreleased]
+## [0.4.0] - 2026-08-07
+
+A parity release. `before_task` and `after_task` never fired on GitHub Copilot CLI — the runtime this plugin is named for — and `after_goal` did not either, so the entire hook layer was inert there. This release makes all three work, then builds the workflow features that only matter once they do: a decision matrix, task enrichment, hook-failure triage, step telemetry, and three optional cross-plugin integrations. Four pre-existing defects in the hook executors were found and fixed on the way, three of them in the PowerShell mirror.
+
+**Breaking:** the four skill directories were renamed, so anything referencing a skill by name must be updated; and anyone driving a goal directory with their own orchestrator rather than the shipped workflow skill must now write the boundary marker for `before_task` / `after_task` to fire under Copilot.
+
 
 ### Fixed
 

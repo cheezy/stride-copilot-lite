@@ -1341,6 +1341,134 @@ else
   nope "card size" "a compressed index of 10-20 STEP lines" "$CARD_LINES"
 fi
 
+# ------------------------------------------------------------------
+# Release surface: documented counts vs actual files (W2032)
+# ------------------------------------------------------------------
+#
+# Every count stated in prose is a claim that goes stale the moment a file is
+# added. These assertions make that staleness a test failure rather than
+# something a reader discovers.
+
+echo ""
+echo "release surface"
+
+NUM_AGENTS=$(ls "$REPO_ROOT"/agents/*.agent.md 2>/dev/null | wc -l | tr -d ' ')
+NUM_SKILLS=$(ls -d "$REPO_ROOT"/skills/*/ 2>/dev/null | wc -l | tr -d ' ')
+NUM_LIB=$(ls "$REPO_ROOT"/lib/*.md 2>/dev/null | wc -l | tr -d ' ')
+
+word_for() {
+  case "$1" in
+    3) printf 'three' ;; 4) printf 'four' ;; 5) printf 'five' ;;
+    6) printf 'six' ;;   7) printf 'seven' ;; *) printf '%s' "$1" ;;
+  esac
+}
+
+AG_WORD=$(word_for "$NUM_AGENTS")
+SK_WORD=$(word_for "$NUM_SKILLS")
+LIB_WORD=$(word_for "$NUM_LIB")
+
+if grep -qi "$AG_WORD subagents" "$REPO_ROOT/AGENTS.md"; then
+  ok "AGENTS.md's subagent count matches the $NUM_AGENTS agent files"
+else
+  nope "subagent count" "'$AG_WORD subagents' in AGENTS.md" "stale (actual: $NUM_AGENTS)"
+fi
+
+if grep -qi "$SK_WORD skills" "$REPO_ROOT/AGENTS.md"; then
+  ok "AGENTS.md's skill count matches the $NUM_SKILLS skill directories"
+else
+  nope "skill count" "'$SK_WORD skills' in AGENTS.md" "stale (actual: $NUM_SKILLS)"
+fi
+
+if grep -qi "$LIB_WORD \`lib/\` helpers" "$REPO_ROOT/AGENTS.md"; then
+  ok "AGENTS.md's lib-helper count matches the $NUM_LIB helper files"
+else
+  nope "lib helper count" "'$LIB_WORD lib/ helpers' in AGENTS.md" "stale (actual: $NUM_LIB)"
+fi
+
+# Every agent file must appear in the layout block, or the block is a partial
+# map that reads as a complete one.
+# Scope to the layout block, not the whole file: agent filenames also appear in
+# prose elsewhere in AGENTS.md, so a file-wide grep still passes after a line is
+# deleted from the block — which is exactly the drift this guards.
+LAYOUT_BLOCK=$(awk '/^  agents\/$/{f=1;next} f && /^  [a-z]/{exit} f' "$REPO_ROOT/AGENTS.md")
+missing_layout=""
+for f in "$REPO_ROOT"/agents/*.agent.md; do
+  base=$(basename "$f")
+  printf '%s' "$LAYOUT_BLOCK" | grep -qF "$base" || missing_layout="$missing_layout $base"
+done
+if [ -z "$missing_layout" ]; then
+  ok "every agent file appears in the AGENTS.md layout block"
+else
+  nope "layout block" "all $NUM_AGENTS agent files listed" "missing:$missing_layout"
+fi
+
+# --- plugin.json is the single version source and its pointers resolve ---
+if command -v python3 > /dev/null 2>&1; then
+  UNRESOLVED=$(cd "$REPO_ROOT" && python3 -c "
+import json, os
+d = json.load(open('plugin.json'))
+print(','.join(p for p in [d['agents'], d['hooks']] + d['skills'] if not os.path.exists(p)))
+" 2>/dev/null)
+  if [ -z "$UNRESOLVED" ]; then
+    ok "plugin.json's agents, skills and hooks pointers all resolve"
+  else
+    nope "plugin.json pointers" "all pointers resolve" "$UNRESOLVED"
+  fi
+
+  PLUGIN_VERSION=$(cd "$REPO_ROOT" && python3 -c "import json;print(json.load(open('plugin.json'))['version'])" 2>/dev/null)
+  # The version must appear in plugin.json and the CHANGELOG heading, and
+  # nowhere else — a second copy is the thing that goes stale.
+  STRAY=$(grep -rln "\"version\": \"$PLUGIN_VERSION\"" "$REPO_ROOT" --include='*.json' 2>/dev/null | grep -v 'plugin.json' | tr '\n' ' ')
+  if [ -z "$STRAY" ]; then
+    ok "plugin.json is the only file stating the version ($PLUGIN_VERSION)"
+  else
+    nope "single version source" "only plugin.json" "$STRAY"
+  fi
+
+  if grep -q "^## \[$PLUGIN_VERSION\]" "$REPO_ROOT/CHANGELOG.md"; then
+    ok "CHANGELOG has a release entry for $PLUGIN_VERSION"
+  else
+    nope "release entry" "## [$PLUGIN_VERSION] in CHANGELOG.md" "not found"
+  fi
+else
+  ok "plugin.json checks SKIPPED — python3 not available on this host"
+fi
+
+# --- SECURITY.md exists and covers the required surfaces ---
+SEC_MD="$REPO_ROOT/SECURITY.md"
+if [ -f "$SEC_MD" ]; then
+  ok "SECURITY.md exists"
+else
+  nope "SECURITY.md" "the file exists" "missing"
+fi
+
+missing_topic=""
+for topic in 'execution model' 'NOT a security boundary' 'blast radius' 'Cross-plugin dispatch' 'Reporting a vulnerability'; do
+  grep -qiF "$topic" "$SEC_MD" 2>/dev/null || missing_topic="$missing_topic [$topic]"
+done
+if [ -z "$missing_topic" ]; then
+  ok "SECURITY.md covers the execution model, marker status, blast radius, dispatch and reporting"
+else
+  nope "SECURITY.md coverage" "all five required topics" "missing:$missing_topic"
+fi
+
+# --- README carries the sections it previously lacked ---
+missing_readme=""
+for sect in '## Subagents' '## What gets written where' '## What this plugin does not do'; do
+  grep -qF "$sect" "$REPO_ROOT/README.md" || missing_readme="$missing_readme [$sect]"
+done
+if [ -z "$missing_readme" ]; then
+  ok "README has the subagents, output-layout and does-NOT sections"
+else
+  nope "README sections" "all three present" "missing:$missing_readme"
+fi
+
+# --- No network call anywhere but a prohibition ---
+NET_HITS=$(grep -rniE '\bcurl \b|\bwget \b|fetch\(' "$REPO_ROOT" \
+  --include='*.sh' --include='*.ps1' --include='*.md' --include='*.json' 2>/dev/null \
+  | grep -viE 'never|no network|not a network|forbidden|prohibit|contract violation|do not|SECURITY.md' | wc -l | tr -d ' ')
+assert_eq "no network call appears except as a prohibition" "$NET_HITS" "0"
+
 # Summary
 # ------------------------------------------------------------------
 
