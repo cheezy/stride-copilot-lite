@@ -7,25 +7,44 @@
 # `## before_task` / `## after_task` / `## after_goal` section from .stride_lite.md.
 #
 # Trigger conditions:
+#   pre  + (Edit|edit|Write|create) + file_path ~ */.stride/lite-boundary + body contains
+#                             "stride-lite-boundary:before_task" → before_task (blocking)
+#                             "stride-lite-boundary:after_task"  → after_task  (blocking)
 #   pre  + Agent + subagent_type == "stride-copilot-lite:task-explorer" → before_task  (blocking)
 #   pre  + Agent + subagent_type == "stride-copilot-lite:task-reviewer" → after_task   (blocking)
 #   post + (Edit|edit|Write|create) + file_path ~ */goal.md + body contains
 #                                                 "## Completion Summary"  → after_goal  (advisory)
 #
+# The boundary-marker route is the RUNTIME-NATIVE intercept (W2021). Copilot CLI emits no
+# skill/agent dispatch event (see stride-copilot/docs/HOOK_RESEARCH.md), so before_task and
+# after_task cannot key on one. Instead the workflow skill writes a one-line marker file at
+# each task boundary and the write itself is the interceptable event — a tool call Copilot
+# DOES emit. Routing requires BOTH the exact marker path AND the exact boundary token, so a
+# write to some other path, or a marker carrying neither token, fires nothing.
+#
+# The Agent route is retained unchanged for Claude Code. To keep each boundary firing exactly
+# once on a runtime that emits both events, the marker route records the boundary it fired in
+# .stride/lite-boundary-fired and the Agent route consumes that record instead of re-firing.
+# A pre-W2021 workflow skill writes no marker, leaves no record, and so still fires via Agent.
+#
 # Harness compatibility:
 #   - Claude Code (PascalCase tool names: Agent, Edit, Write; stdin field "tool_name").
 #   - GitHub Copilot CLI (lowercase tool names: edit, create; stdin field "toolName"; toolArgs
-#     is a JSON-encoded string — substring-based field extraction still locates "file_path"
-#     and "## Completion Summary" inside the encoded args). Copilot CLI does NOT currently
-#     emit a skill/agent dispatch event, so before_task and after_task are dormant there
-#     until Copilot adds the equivalent intercept point. The after_goal hook fires correctly
-#     on both runtimes via the Edit|edit / Write|create matchers in hooks.json.
+#     is a JSON-encoded string — substring-based field extraction still locates "file_path",
+#     the boundary token and "## Completion Summary" inside the encoded args).
 #
 # Usage: echo '<hook-json>' | stride-copilot-lite-hook.sh <pre|post>
 #
 # Exit codes:
 #   0 — success, no-op, or non-trigger
 #   2 — blocking PreToolUse failure (only meaningful for pre + before_task/after_task)
+#
+# Blocking contract (dual-runtime). Claude Code blocks a PreToolUse tool call on exit 2.
+# Copilot CLI ignores exit codes and blocks on a stdout {"permissionDecision":"deny"} object.
+# A blocking failure therefore emits BOTH: the permissionDecision keys are added to the same
+# single-line failure JSON this script already emits (Copilot reads them; every other consumer
+# ignores the extra keys) AND the process exits 2. Emitting only one of the two would let a
+# failing before_task stop the workflow on one runtime while the other silently continued.
 #
 # Cross-platform parity contract: this script and stride-copilot-lite-hook.ps1 MUST detect
 # the same three trigger conditions, produce equivalent single-line JSON results
@@ -36,6 +55,11 @@ set -uo pipefail
 PHASE="${1:-}"
 PROJECT_DIR="${CLAUDE_PROJECT_DIR:-.}"
 STRIDE_LITE_MD="$PROJECT_DIR/.stride_lite.md"
+
+# Boundary-marker route (W2021). The marker path is plugin-owned and fixed; the
+# fired-record is transient session state. Both live under .stride/, which the
+# plugin's .gitignore already excludes.
+BOUNDARY_FIRED_FILE="$PROJECT_DIR/.stride/lite-boundary-fired"
 
 # --- Platform detection: delegate to PowerShell on native Windows ---
 # Git Bash (OSTYPE=msys*) and WSL have full bash — run directly.
@@ -86,6 +110,28 @@ _extract_string() {
   esac
 }
 
+# --- Unescaped view of the payload, for Copilot CLI's encoded toolArgs ---
+# Copilot delivers tool arguments as a JSON-ENCODED STRING, so the fields inside
+# arrive escaped: \"file_path\":\"...\". _extract_string looks for a real quote,
+# finds the backslash, and returns empty — which is why every Copilot payload
+# silently routed to nothing before W2021 (after_goal included, despite the docs
+# claiming otherwise). One flat unescaped copy is cheaper than teaching the
+# extractor two grammars, and the Claude Code path still matches on the raw pass.
+_unescape_json_string() {
+  local _s="$1"
+  printf '%s' "${_s//\\\"/\"}"
+}
+
+# Extract a key from the raw payload, falling back to the unescaped view.
+_extract_string_any() {
+  local _key="$1" _raw="$2" _unesc="${3:-}" _v
+  _v=$(_extract_string "$_key" "$_raw")
+  if [ -z "$_v" ] && [ -n "$_unesc" ]; then
+    _v=$(_extract_string "$_key" "$_unesc")
+  fi
+  printf '%s' "$_v"
+}
+
 # --- JSON string escape (no jq) ---
 # Escapes backslash, double quote, and common control chars. Sufficient for
 # emitting command strings, exit messages, and stdout/stderr tails.
@@ -116,6 +162,27 @@ _json_array_from_lines() {
   printf ']'
 }
 
+# --- Boundary fired-record (marker route ↔ Agent route de-duplication) ---
+# Claude Code emits BOTH the marker write and the Agent dispatch for one boundary.
+# The marker route fires first and records which boundary it handled; the Agent
+# route then consumes that record and stands down, so the boundary fires once.
+# Consuming (rather than merely reading) is what makes the next iteration of the
+# same boundary — the reviewer loop re-running after_task — fire again correctly.
+_boundary_consume_fired() {
+  local _want="$1"
+  [ -f "$BOUNDARY_FIRED_FILE" ] || return 1
+  local _last
+  _last=$(cat "$BOUNDARY_FIRED_FILE" 2>/dev/null) || return 1
+  [ "$_last" = "$_want" ] || return 1
+  rm -f "$BOUNDARY_FIRED_FILE" 2>/dev/null
+  return 0
+}
+
+_boundary_record_fired() {
+  mkdir -p "$(dirname "$BOUNDARY_FIRED_FILE")" 2>/dev/null || return 0
+  printf '%s' "$1" > "$BOUNDARY_FIRED_FILE" 2>/dev/null || true
+}
+
 # --- Parse and execute one .stride_lite.md hook section ---
 # Mirrors stride-hook.sh:run_stride_section but reads .stride_lite.md, dispatches
 # on the three stride-lite section names, and emits JSON without jq.
@@ -125,6 +192,7 @@ _json_array_from_lines() {
 #   2 — first command failed; structured failure JSON emitted on stdout
 run_stride_lite_section() {
   local _section="$1"
+  local _blocking="${2:-0}"
   local _commands=""
   local _found=0
   local _capture=0
@@ -175,7 +243,7 @@ run_stride_lite_section() {
   local _cmd_index=0
   local _cmd_total=${#_cmd_list[@]}
   local _cmd_stdout_file _cmd_stderr_file _cmd_exit _cmd_stdout _cmd_stderr
-  local _remaining_file _completed_json _remaining_json _end_secs _duration _i
+  local _remaining_file _completed_json _remaining_json _end_secs _duration _i _deny_json
 
   for _trimmed in "${_cmd_list[@]}"; do
     _cmd_stdout_file=$(mktemp)
@@ -207,7 +275,17 @@ run_stride_lite_section() {
       _completed_json=$(_json_array_from_lines < "$_completed_file")
       _remaining_json=$(_json_array_from_lines < "$_remaining_file")
 
-      printf '{"hook":"%s","status":"failed","failed_command":"%s","command_index":%d,"exit_code":%d,"stdout":"%s","stderr":"%s","commands_completed":%s,"commands_remaining":%s}\n' \
+      # Copilot CLI blocks a PreToolUse call on a stdout permissionDecision object,
+      # not on the exit code. Carry those keys inside this same failure object for
+      # blocking hooks so BOTH runtimes stop; consumers that don't know the keys
+      # ignore them. Advisory hooks (after_goal) never deny.
+      _deny_json=""
+      if [ "$_blocking" -eq 1 ]; then
+        _deny_json=$(printf ',"permissionDecision":"deny","permissionDecisionReason":"%s"' \
+          "$(_json_escape "stride-copilot-lite $_section hook failed on command $((_cmd_index + 1))/$_cmd_total: $_trimmed")")
+      fi
+
+      printf '{"hook":"%s","status":"failed","failed_command":"%s","command_index":%d,"exit_code":%d,"stdout":"%s","stderr":"%s","commands_completed":%s,"commands_remaining":%s%s}\n' \
         "$(_json_escape "$_section")" \
         "$(_json_escape "$_trimmed")" \
         "$_cmd_index" \
@@ -215,7 +293,8 @@ run_stride_lite_section() {
         "$(_json_escape "$_cmd_stdout")" \
         "$(_json_escape "$_cmd_stderr")" \
         "$_completed_json" \
-        "$_remaining_json"
+        "$_remaining_json" \
+        "$_deny_json"
 
       echo "stride-copilot-lite $_section hook failed on command $((_cmd_index + 1))/$_cmd_total: $_trimmed" >&2
       [ -n "$_cmd_stderr" ] && echo "$_cmd_stderr" >&2
@@ -257,32 +336,60 @@ if [ -z "$INPUT" ]; then
   exit 0
 fi
 
+# Unescaped view for Copilot CLI's JSON-encoded toolArgs (see _unescape_json_string).
+INPUT_UNESC=$(_unescape_json_string "$INPUT")
+
 # Try Claude Code's snake_case field first, fall back to Copilot CLI's camelCase.
-TOOL_NAME=$(_extract_string "tool_name" "$INPUT")
+TOOL_NAME=$(_extract_string_any "tool_name" "$INPUT" "$INPUT_UNESC")
 if [ -z "$TOOL_NAME" ]; then
-  TOOL_NAME=$(_extract_string "toolName" "$INPUT")
+  TOOL_NAME=$(_extract_string_any "toolName" "$INPUT" "$INPUT_UNESC")
 fi
 
 HOOK_NAME=""
 BLOCKING=0
+MARKER_ROUTE=0
 
 case "$PHASE" in
   pre)
-    # Agent is Claude Code's subagent-dispatch tool name. Copilot CLI has no
-    # equivalent event yet (HOOK_RESEARCH); this branch fires only under
-    # Claude Code today.
+    # Agent is Claude Code's subagent-dispatch tool name. Copilot CLI emits no
+    # equivalent event (HOOK_RESEARCH), so this branch fires only under Claude
+    # Code — where it stands down if the marker route already handled the
+    # boundary, keeping each boundary to exactly one firing.
     if [ "$TOOL_NAME" = "Agent" ]; then
-      SUBAGENT_TYPE=$(_extract_string "subagent_type" "$INPUT")
+      SUBAGENT_TYPE=$(_extract_string_any "subagent_type" "$INPUT" "$INPUT_UNESC")
       case "$SUBAGENT_TYPE" in
         stride-copilot-lite:task-explorer) HOOK_NAME="before_task"; BLOCKING=1 ;;
         stride-copilot-lite:task-reviewer) HOOK_NAME="after_task";  BLOCKING=1 ;;
+      esac
+      if [ -n "$HOOK_NAME" ] && _boundary_consume_fired "$HOOK_NAME"; then
+        exit 0
+      fi
+    else
+      # Runtime-native boundary intercept: the workflow skill's write of the
+      # boundary marker. Requires BOTH the exact plugin-owned path AND an exact
+      # boundary token in the written body — either alone routes to nothing.
+      case "$TOOL_NAME" in
+        Edit|Write|edit|create)
+          FILE_PATH=$(_extract_string_any "file_path" "$INPUT" "$INPUT_UNESC")
+          # Normalize Windows separators so one pattern serves both platforms.
+          FILE_PATH="${FILE_PATH//\\//}"
+          case "$FILE_PATH" in
+            */.stride/lite-boundary|.stride/lite-boundary)
+              if printf '%s' "$INPUT" | grep -q 'stride-lite-boundary:before_task'; then
+                HOOK_NAME="before_task"; BLOCKING=1; MARKER_ROUTE=1
+              elif printf '%s' "$INPUT" | grep -q 'stride-lite-boundary:after_task'; then
+                HOOK_NAME="after_task";  BLOCKING=1; MARKER_ROUTE=1
+              fi
+              ;;
+          esac
+          ;;
       esac
     fi
     ;;
   post)
     case "$TOOL_NAME" in
       Edit|Write|edit|create)
-        FILE_PATH=$(_extract_string "file_path" "$INPUT")
+        FILE_PATH=$(_extract_string_any "file_path" "$INPUT" "$INPUT_UNESC")
         case "$FILE_PATH" in
           */goal.md|goal.md)
             # "## Completion Summary" detection — scan the entire hook JSON.
@@ -305,8 +412,14 @@ if [ -z "$HOOK_NAME" ]; then
   exit 0
 fi
 
-run_stride_lite_section "$HOOK_NAME"
+run_stride_lite_section "$HOOK_NAME" "$BLOCKING"
 RC=$?
+
+# Record the boundary so Claude Code's Agent dispatch, which follows the marker
+# write for the same boundary, stands down instead of firing the section twice.
+if [ "$MARKER_ROUTE" -eq 1 ]; then
+  _boundary_record_fired "$HOOK_NAME"
+fi
 
 # PostToolUse cannot roll back the tool call — never block with exit 2 there.
 # PreToolUse blocking failures propagate as exit 2 so the dispatch is aborted.

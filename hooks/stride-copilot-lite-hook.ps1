@@ -12,22 +12,40 @@ param(
 # `## before_task` / `## after_task` / `## after_goal` section from .stride_lite.md.
 #
 # Trigger conditions (identical to stride-copilot-lite-hook.sh):
+#   pre  + (Edit|edit|Write|create) + file_path ~ */.stride/lite-boundary + body contains
+#                             "stride-lite-boundary:before_task" → before_task (blocking)
+#                             "stride-lite-boundary:after_task"  → after_task  (blocking)
 #   pre  + Agent + subagent_type == "stride-copilot-lite:task-explorer" → before_task  (blocking)
 #   pre  + Agent + subagent_type == "stride-copilot-lite:task-reviewer" → after_task   (blocking)
 #   post + (Edit|edit|Write|create) + file_path ~ */goal.md + body contains
 #                                                 "## Completion Summary"  → after_goal  (advisory)
 #
+# The boundary-marker route is the RUNTIME-NATIVE intercept (W2021). Copilot CLI emits no
+# skill/agent dispatch event (see stride-copilot/docs/HOOK_RESEARCH.md), so before_task and
+# after_task cannot key on one. Instead the workflow skill writes a one-line marker file at
+# each task boundary and the write itself is the interceptable event. Routing requires BOTH
+# the exact marker path AND the exact boundary token, so a write to some other path, or a
+# marker carrying neither token, fires nothing.
+#
+# The Agent route is retained unchanged for Claude Code. To keep each boundary firing exactly
+# once on a runtime that emits both events, the marker route records the boundary it fired in
+# .stride/lite-boundary-fired and the Agent route consumes that record instead of re-firing.
+#
 # Harness compatibility: handles both Claude Code (PascalCase tool_name; tool_input as
 # object) and GitHub Copilot CLI (camelCase toolName; toolArgs as JSON-encoded string).
-# Copilot CLI does not currently emit a skill/agent dispatch event, so before_task and
-# after_task are dormant under Copilot today; the after_goal hook fires correctly on
-# both runtimes via the Edit|edit / Write|create matchers in hooks.json.
 #
 # Usage: echo '<hook-json>' | pwsh stride-copilot-lite-hook.ps1 <pre|post>
 #
 # Exit codes:
 #   0 — success, no-op, or non-trigger
 #   2 — blocking PreToolUse failure (only meaningful for pre + before_task/after_task)
+#
+# Blocking contract (dual-runtime). Claude Code blocks a PreToolUse tool call on exit 2.
+# Copilot CLI ignores exit codes and blocks on a stdout {"permissionDecision":"deny"} object.
+# A blocking failure therefore emits BOTH: the permissionDecision keys are added to the same
+# single-line failure JSON this script already emits AND the process exits 2. Emitting only
+# one would let a failing before_task stop the workflow on one runtime while the other
+# silently continued.
 #
 # Cross-platform parity contract: this script and stride-copilot-lite-hook.sh MUST detect
 # the same three trigger conditions, produce equivalent single-line JSON results
@@ -39,11 +57,49 @@ $ErrorActionPreference = 'Stop'
 $ProjectDir = if ($env:CLAUDE_PROJECT_DIR) { $env:CLAUDE_PROJECT_DIR } else { '.' }
 $StrideLiteMd = Join-Path $ProjectDir '.stride_lite.md'
 
+# Boundary-marker route (W2021). Transient session state under .stride/, which the
+# plugin's .gitignore already excludes.
+$BoundaryFiredFile = Join-Path (Join-Path $ProjectDir '.stride') 'lite-boundary-fired'
+
+# Marker route <-> Agent route de-duplication. Claude Code emits BOTH events for one
+# boundary; the marker route fires first and records the boundary, and the Agent route
+# consumes that record and stands down. Consuming rather than merely reading is what
+# lets the reviewer loop's second after_task fire correctly.
+function Test-BoundaryConsumeFired {
+    param([string]$Want)
+    if (-not (Test-Path $BoundaryFiredFile)) { return $false }
+    try {
+        $last = (Get-Content $BoundaryFiredFile -Raw -Encoding UTF8).Trim()
+    } catch {
+        return $false
+    }
+    if ($last -ne $Want) { return $false }
+    Remove-Item -Force $BoundaryFiredFile -ErrorAction SilentlyContinue
+    return $true
+}
+
+function Set-BoundaryFired {
+    param([string]$Boundary)
+    try {
+        $dir = Split-Path -Parent $BoundaryFiredFile
+        if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
+        [System.IO.File]::WriteAllText($BoundaryFiredFile, $Boundary)
+    } catch {
+        # Best-effort only — an unwritable state dir must never fail the hook.
+    }
+}
+
 if (-not $Phase) { exit 0 }
 if (-not (Test-Path $StrideLiteMd)) { exit 0 }
 
-# Read Claude Code hook input from stdin
-$InputJson = @($input) -join "`n"
+# Read the harness hook input from stdin.
+# Must be [Console]::In, not the automatic $input variable: this script is invoked as
+# `pwsh -File ... <phase>` with the payload piped in, and a -File script whose param()
+# block declares no pipeline-bound parameter cannot bind piped input — PowerShell raises
+# "The input object cannot be bound to any parameters" and $input stays empty, so every
+# trigger silently no-opped under every runtime. Reading the stream directly sidesteps
+# parameter binding entirely and works the same on Windows PowerShell and pwsh.
+$InputJson = [Console]::In.ReadToEnd()
 if (-not $InputJson) { exit 0 }
 
 # --- Pure JSON parsing via built-in ConvertFrom-Json (no module installs) ---
@@ -88,15 +144,33 @@ try {
 # --- Determine which stride-lite hook to run ---
 $HookName = ''
 $Blocking = $false
+$MarkerRoute = $false
 
 switch ($Phase) {
     'pre' {
-        # Agent is Claude Code's subagent-dispatch tool name. Copilot CLI has no
-        # equivalent event yet; this branch fires only under Claude Code today.
+        # Agent is Claude Code's subagent-dispatch tool name. Copilot CLI emits no
+        # equivalent event, so this branch fires only under Claude Code — where it
+        # stands down if the marker route already handled the boundary.
         if ($ToolName -eq 'Agent') {
             switch ($SubagentType) {
                 'stride-copilot-lite:task-explorer' { $HookName = 'before_task'; $Blocking = $true }
                 'stride-copilot-lite:task-reviewer' { $HookName = 'after_task';  $Blocking = $true }
+            }
+            if ($HookName -and (Test-BoundaryConsumeFired -Want $HookName)) {
+                exit 0
+            }
+        }
+        elseif ($ToolName -eq 'Edit' -or $ToolName -eq 'Write' -or $ToolName -eq 'edit' -or $ToolName -eq 'create') {
+            # Runtime-native boundary intercept: the workflow skill's write of the
+            # boundary marker. Requires BOTH the exact plugin-owned path AND an exact
+            # boundary token in the written body — either alone routes to nothing.
+            if ($FilePath -match '(^|[/\\])\.stride[/\\]lite-boundary$') {
+                if ($InputJson -match 'stride-lite-boundary:before_task') {
+                    $HookName = 'before_task'; $Blocking = $true; $MarkerRoute = $true
+                }
+                elseif ($InputJson -match 'stride-lite-boundary:after_task') {
+                    $HookName = 'after_task';  $Blocking = $true; $MarkerRoute = $true
+                }
             }
         }
     }
@@ -122,7 +196,7 @@ if (-not $HookName) { exit 0 }
 #   0 — section missing OR empty fenced block OR all commands succeeded
 #   2 — first command failed; structured failure JSON emitted on stdout
 function Invoke-StrideLiteSection {
-    param([string]$Section)
+    param([string]$Section, [bool]$IsBlocking = $false)
 
     $raw = Get-Content $StrideLiteMd -Raw -Encoding UTF8
     $raw = $raw -replace "`r`n", "`n"
@@ -235,6 +309,15 @@ function Invoke-StrideLiteSection {
                     commands_completed = @($completedCmds)
                     commands_remaining = @($remainingCmds)
                 }
+                # Copilot CLI blocks a PreToolUse call on a stdout permissionDecision
+                # object, not on the exit code. Carry those keys inside this same
+                # failure object for blocking hooks so BOTH runtimes stop; consumers
+                # that don't know the keys ignore them. Advisory hooks never deny.
+                if ($IsBlocking) {
+                    $failureResult['permissionDecision'] = 'deny'
+                    $failureResult['permissionDecisionReason'] =
+                        "stride-copilot-lite $Section hook failed on command $($cmdIndex + 1)/$($cmdTotal): $execTrimmed"
+                }
                 # Write JSON directly to the host stdout stream to avoid
                 # capturing it in the caller's `$rc = Invoke-StrideLiteSection`
                 # assignment.
@@ -265,7 +348,13 @@ function Invoke-StrideLiteSection {
     return 0
 }
 
-$rc = Invoke-StrideLiteSection -Section $HookName
+$rc = Invoke-StrideLiteSection -Section $HookName -IsBlocking $Blocking
+
+# Record the boundary so Claude Code's Agent dispatch, which follows the marker write
+# for the same boundary, stands down instead of firing the section twice.
+if ($MarkerRoute) {
+    Set-BoundaryFired -Boundary $HookName
+}
 
 # PostToolUse cannot roll back the tool call — never block with exit 2 there.
 # PreToolUse blocking failures propagate as exit 2 so the dispatch is aborted.

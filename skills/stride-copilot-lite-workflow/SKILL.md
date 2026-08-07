@@ -69,11 +69,19 @@ If every `taskN.md` in the goal directory already has a `## Completion Summary` 
 
 ### Step 2 — Execute the `## before_task` hook
 
-The `hooks/hooks.json` registered with the Copilot harness auto-fires the `## before_task` section from `.stride_lite.md` as a **PreToolUse** hook on the Step 3 subagent dispatch of `stride-copilot-lite:task-explorer`. The harness runs the hook before the agent dispatch completes; a non-zero exit returns `exit 2` and blocks the dispatch, which surfaces to you as a Step 3 failure.
+**Write the boundary marker.** Write the file `.stride/lite-boundary` in the project root with this exact single-line content:
 
-You do **NOT** read `.stride_lite.md` or execute its hook sections directly in this step — the harness does that. Missing `.stride_lite.md`, a missing `## before_task` section, or an empty fenced block all degrade to a clean no-op (exit 0) so the dispatch proceeds. A failing command emits a structured failure JSON on stdout for your Step 8 Completion Summary to reference.
+```
+stride-lite-boundary:before_task
+```
 
-If Step 3's dispatch is blocked by a `before_task` failure, surface the failing command and its stderr to the user and stop the workflow.
+That write is what fires the hook. `hooks/hooks.json` registers a **PreToolUse** hook on the write tools, and `hooks/stride-copilot-lite-hook.sh` routes it to the `## before_task` section of `.stride_lite.md` when — and only when — the path is exactly `.stride/lite-boundary` **and** the body carries that exact token. Writing the marker is mandatory: it is the only boundary signal GitHub Copilot CLI actually emits, because Copilot has no skill/agent dispatch event to intercept (see `AGENTS.md` → "Hook intercept design"). Under Claude Code the same write fires the same hook, and the subsequent Step 3 dispatch stands down rather than firing it a second time.
+
+The hook runs **before** the marker write completes. A failing `before_task` command blocks the write and stops you here — on Claude Code via `exit 2`, on Copilot CLI via a `permissionDecision: deny` object on stdout. Both are emitted, so the workflow halts identically on either runtime.
+
+You do **NOT** read `.stride_lite.md` or execute its hook sections directly in this step — the harness does that. Missing `.stride_lite.md`, a missing `## before_task` section, or an empty fenced block all degrade to a clean no-op (exit 0) so the workflow proceeds. A failing command emits a structured failure JSON on stdout for your Step 8 Completion Summary to reference.
+
+If the marker write is blocked by a `before_task` failure, surface the failing command and its stderr to the user and stop the workflow. Do **not** proceed to Step 3, and do **not** retry the write to get past the hook — the block is the hook doing its job.
 
 ### Step 3 — Dispatch `stride-copilot-lite:task-explorer`
 
@@ -91,7 +99,15 @@ Follow the acceptance criteria as your definition of done. Replicate the pattern
 
 ### Step 5 — Execute the `## after_task` hook
 
-Same auto-fire pattern as Step 2, but the harness runs the `## after_task` section as a **PreToolUse** hook on the Step 6 subagent dispatch of `stride-copilot-lite:task-reviewer`. Same blocking semantics — a non-zero exit blocks the reviewer dispatch, which surfaces to you as a Step 6 failure.
+Same boundary-marker pattern as Step 2. Write `.stride/lite-boundary` again, this time with:
+
+```
+stride-lite-boundary:after_task
+```
+
+The harness routes that write to the `## after_task` section. Same blocking semantics — a failing command blocks the write and stops the workflow on both runtimes (`exit 2` plus `permissionDecision: deny`), so do not proceed to Step 6 and do not retry the write to get past it.
+
+**Re-entering this step is expected.** When Step 7 sends you back to Step 4 for another implementation round, Step 5 runs again and you write the marker again. Re-firing `after_task` is correct — the user's tests and linters must run against the revised code, not the code from the previous round.
 
 You do **NOT** execute `.stride_lite.md` hook sections directly in this step. The harness handles it; a failing command emits structured failure JSON for your Step 8 Completion Summary.
 
@@ -181,9 +197,15 @@ As of v0.9.0 the three hooks (`## before_task`, `## after_task`, `## after_goal`
 
 | Section | Phase | Matcher | Trigger condition | Blocking? |
 |---|---|---|---|---|
-| `## before_task` | PreToolUse | subagent dispatch | subagent identity == `"stride-copilot-lite:task-explorer"` (Step 3 dispatch) | yes (exit 2 blocks the dispatch) |
-| `## after_task` | PreToolUse | subagent dispatch | subagent identity == `"stride-copilot-lite:task-reviewer"` (Step 6 dispatch) | yes (exit 2 blocks the dispatch) |
-| `## after_goal` | PostToolUse | `Edit` or `Write` | file path ends in `goal.md` AND body contains `## Completion Summary` (Step 8 final-task wrap-up) | no (advisory; failure cannot roll back the write) |
+| `## before_task` | PreToolUse | `Edit\|edit` or `Write\|create` | file path is `.stride/lite-boundary` AND body is `stride-lite-boundary:before_task` (Step 2 marker write) | yes — blocks the write |
+| `## after_task` | PreToolUse | `Edit\|edit` or `Write\|create` | file path is `.stride/lite-boundary` AND body is `stride-lite-boundary:after_task` (Step 5 marker write) | yes — blocks the write |
+| `## before_task` | PreToolUse | `Agent` | subagent identity == `"stride-copilot-lite:task-explorer"` — **legacy Claude Code route**, stands down when the Step 2 marker already fired | yes — blocks the dispatch |
+| `## after_task` | PreToolUse | `Agent` | subagent identity == `"stride-copilot-lite:task-reviewer"` — **legacy Claude Code route**, stands down when the Step 5 marker already fired | yes — blocks the dispatch |
+| `## after_goal` | PostToolUse | `Edit\|edit` or `Write\|create` | file path ends in `goal.md` AND body contains `## Completion Summary` (Step 8 final-task wrap-up) | no (advisory; failure cannot roll back the write) |
+
+**Why the boundary marker rather than the agent dispatch.** GitHub Copilot CLI emits no skill- or agent-dispatch event, so the two `Agent` rows above never match there, which is why `before_task` and `after_task` never fired under the runtime this plugin is named for. The marker write is a tool call Copilot *does* emit. The `Agent` rows are retained so Claude Code behaviour is unchanged for goal directories driven by a pre-v0.10.0 workflow skill that writes no marker. When both events occur — a current skill running under Claude Code — the marker route fires first and records the boundary, and the `Agent` route consumes that record and stands down, so each boundary fires exactly once. The full rationale and the rejected alternatives are in `AGENTS.md` → "Hook intercept design".
+
+**Blocking on both runtimes.** Claude Code blocks a PreToolUse call on `exit 2`; Copilot CLI ignores exit codes and blocks on a `{"permissionDecision":"deny"}` object on stdout. A failing blocking hook emits **both** — the `permissionDecision` keys ride inside the same failure JSON — so neither runtime can silently continue past a hook the other one blocked on. `after_goal` is advisory and never emits a deny.
 
 For each trigger, the hook executor:
 
@@ -199,6 +221,7 @@ The hook environment is the same shell environment the Copilot harness runs in �
 The workflow skill's Bash usage is scoped to a specific set of operations. Explicit ✅ examples:
 
 - ✅ `.stride_lite.md` hook execution is performed by the harness via `hooks/stride-copilot-lite-hook.sh` (or `.ps1` on native Windows) — this skill body does NOT run `## before_task` / `## after_task` / `## after_goal` directly.
+- ✅ Writing `.stride/lite-boundary` in Steps 2 and 5 — the boundary marker that fires `before_task` / `after_task`. This is the one file mutation outside the goal directory the skill is permitted, and it is deliberately a **file write rather than a shell command**: the trigger stays unforgeable by anything that merely echoes a string, and the skill needs no new Bash grant to signal a boundary. Write only the two documented single-line bodies, and only at those two steps.
 - ✅ `git diff HEAD` — captured by the task-reviewer agent in Step 6 (not directly by this skill; the agent has its own Bash grant).
 - ✅ `ls`, `test -f`, `find` — for filesystem navigation inside the goal directory (listing taskN.md files, checking for task(K+1).md existence).
 - ✅ `git rev-parse --show-toplevel` — for locating the project root (e.g., to inspect `.stride_lite.md` for the user, not to execute it).

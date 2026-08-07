@@ -178,6 +178,140 @@ if ($rc -eq 0 -and $out -match '"hook":"after_goal"' -and $out -match '"status":
     Ok "after_goal failing command → exit 0 (advisory) + failed-status JSON"
 } else { Nope "after_goal failing command → exit 0 + failed JSON" "rc=$rc, stdout='$out'" }
 
+# ==================================================================
+# Boundary-marker route (W2021) — mirrors cases 14-25 of the bash
+# harness. The parity contract requires the same routing decisions.
+# ==================================================================
+
+function Clear-Fired($dir) {
+    Remove-Item -Force (Join-Path (Join-Path $dir '.stride') 'lite-boundary-fired') -ErrorAction SilentlyContinue
+}
+
+$MarkerCC = '{"tool_name":"Write","tool_input":{"file_path":"/p/.stride/lite-boundary","content":"stride-lite-boundary:before_task"}}'
+$MarkerCopBefore = '{"toolName":"create","toolArgs":"{\"file_path\":\"/p/.stride/lite-boundary\",\"content\":\"stride-lite-boundary:before_task\"}"}'
+$MarkerCopAfter = '{"toolName":"edit","toolArgs":"{\"file_path\":\".stride/lite-boundary\",\"content\":\"stride-lite-boundary:after_task\"}"}'
+
+# --- Case 11: Copilot CLI marker write → before_task ---
+Write-Host "Case 11: Copilot CLI boundary marker triggers before_task"
+Clear-Fired $Scratch
+$out = Run-Hook 'pre' $MarkerCopBefore
+if ($out -match '"hook":"before_task"' -and $out -match '"status":"success"') {
+    Ok "Copilot marker (create + encoded toolArgs) → before_task fires"
+} else { Nope "Copilot marker → before_task" "stdout='$out'" }
+
+# --- Case 12: Copilot CLI marker write → after_task, relative path ---
+Write-Host "Case 12: Copilot CLI boundary marker triggers after_task"
+Clear-Fired $Scratch
+$out = Run-Hook 'pre' $MarkerCopAfter
+if ($out -match '"hook":"after_task"' -and $out -match '"status":"success"') {
+    Ok "Copilot marker (edit, relative path) → after_task fires"
+} else { Nope "Copilot marker → after_task" "stdout='$out'" }
+
+# --- Case 13: Claude Code marker write → before_task ---
+Write-Host "Case 13: Claude Code boundary marker triggers before_task"
+Clear-Fired $Scratch
+$out = Run-Hook 'pre' $MarkerCC
+if ($out -match '"hook":"before_task"' -and $out -match '"status":"success"') {
+    Ok "Claude Code marker (Write + tool_input) → before_task fires"
+} else { Nope "Claude Code marker → before_task" "stdout='$out'" }
+
+# --- Case 14: NEAR-MISS — marker path, no boundary token → no-op ---
+Write-Host "Case 14: NEAR-MISS marker path without a boundary token → no-op"
+Clear-Fired $Scratch
+$out = Run-Hook 'pre' '{"toolName":"create","toolArgs":"{\"file_path\":\"/p/.stride/lite-boundary\",\"content\":\"just some text\"}"}'
+if (-not $out) { Ok "marker path + no token → no-op (no stdout)" }
+else { Nope "marker path without token should no-op" "stdout='$out'" }
+
+# --- Case 15: NEAR-MISS — boundary token, non-marker path → no-op ---
+Write-Host "Case 15: NEAR-MISS boundary token written to some other file → no-op"
+Clear-Fired $Scratch
+$out = Run-Hook 'pre' '{"toolName":"create","toolArgs":"{\"file_path\":\"/p/docs/notes.md\",\"content\":\"stride-lite-boundary:before_task\"}"}'
+if (-not $out) { Ok "boundary token + non-marker path → no-op (no stdout)" }
+else { Nope "boundary token outside the marker path should no-op" "stdout='$out'" }
+
+# --- Case 16: NEAR-MISS — marker payload in the post phase → no-op ---
+Write-Host "Case 16: NEAR-MISS marker payload on PostToolUse → no-op"
+Clear-Fired $Scratch
+$out = Run-Hook 'post' $MarkerCopBefore
+if (-not $out) { Ok "marker payload + post phase → no-op (no stdout)" }
+else { Nope "marker payload in post phase should no-op" "stdout='$out'" }
+
+# --- Case 17: NEAR-MISS — boundary token inside a bash command → no-op ---
+Write-Host "Case 17: NEAR-MISS boundary token inside a bash command → no-op"
+Clear-Fired $Scratch
+$out = Run-Hook 'pre' '{"toolName":"bash","toolArgs":"{\"command\":\"echo stride-lite-boundary:before_task\"}"}'
+if (-not $out) { Ok "boundary token in a bash command → no-op (no stdout)" }
+else { Nope "boundary token in a bash command should no-op" "stdout='$out'" }
+
+# --- Case 18: marker route then Agent dispatch → fires exactly once ---
+Write-Host "Case 18: marker write + Agent dispatch → before_task fires exactly once"
+$DedupeScratch = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "stride-copilot-lite-dedupe-$([System.Guid]::NewGuid())")
+New-Item -ItemType Directory -Force -Path $DedupeScratch | Out-Null
+Copy-Item (Join-Path $Scratch '.stride_lite.md') (Join-Path $DedupeScratch '.stride_lite.md')
+$first = Run-Hook-Dir $DedupeScratch 'pre' $MarkerCC
+$second = Run-Hook-Dir $DedupeScratch 'pre' '{"tool_name":"Agent","tool_input":{"subagent_type":"stride-copilot-lite:task-explorer"}}'
+if ($first -match '"hook":"before_task"' -and -not $second) {
+    Ok "marker fires, following Agent dispatch stands down → exactly one firing"
+} else { Nope "marker+Agent should fire exactly once" "first='$first' second='$second'" }
+
+# --- Case 19: record is consumed, so the next boundary fires again ---
+Write-Host "Case 19: fired-record is consumed, so a later Agent dispatch fires again"
+$third = Run-Hook-Dir $DedupeScratch 'pre' '{"tool_name":"Agent","tool_input":{"subagent_type":"stride-copilot-lite:task-explorer"}}'
+Remove-Item -Recurse -Force $DedupeScratch -ErrorAction SilentlyContinue
+if ($third -match '"hook":"before_task"') {
+    Ok "record consumed → next Agent dispatch fires normally"
+} else { Nope "record should be consumed, not sticky" "third='$third'" }
+
+# --- Case 20: blocking marker failure → exit 2 AND permissionDecision deny ---
+Write-Host "Case 20: blocking marker failure → exit 2 + permissionDecision deny"
+Clear-Fired $FailScratch
+$out = Run-Hook-Dir $FailScratch 'pre' $MarkerCopBefore
+$rc = $LASTEXITCODE
+if ($rc -eq 2 -and $out -match '"status":"failed"' -and $out -match '"permissionDecision":"deny"' -and $out -match '"permissionDecisionReason":') {
+    Ok "blocking failure → exit 2 AND permissionDecision deny (both runtimes stop)"
+} else { Nope "blocking failure must emit exit 2 + deny" "rc=$rc, stdout='$out'" }
+
+# --- Case 21: advisory after_goal failure must NOT deny ---
+Write-Host "Case 21: advisory after_goal failure → no permissionDecision"
+$out = Run-Hook-Dir $FailScratch 'post' '{"tool_name":"Edit","tool_input":{"file_path":"g/goal.md","new_string":"## Completion Summary"}}'
+$rc = $LASTEXITCODE
+if ($rc -eq 0 -and $out -match '"status":"failed"' -and $out -notmatch 'permissionDecision') {
+    Ok "advisory after_goal failure → exit 0 and NO deny"
+} else { Nope "after_goal must not deny" "rc=$rc, stdout='$out'" }
+
+# --- Case 22: after_goal fires on a Copilot-shaped payload ---
+Write-Host "Case 22: after_goal fires on a Copilot CLI encoded-toolArgs payload"
+$out = Run-Hook 'post' '{"toolName":"edit","toolArgs":"{\"file_path\":\"/p/g/goal.md\",\"content\":\"## Completion Summary\"}"}'
+if ($out -match '"hook":"after_goal"' -and $out -match '"status":"success"') {
+    Ok "Copilot encoded toolArgs → after_goal fires"
+} else { Nope "Copilot encoded toolArgs → after_goal" "stdout='$out'" }
+
+# --- Case 23: full simulated workflow pass → each hook fires exactly once, in order ---
+Write-Host "Case 23: full workflow pass → before_task, after_task, after_goal once each, in order"
+$SeqScratch = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "stride-copilot-lite-seq-$([System.Guid]::NewGuid())")
+New-Item -ItemType Directory -Force -Path $SeqScratch | Out-Null
+Copy-Item (Join-Path $Scratch '.stride_lite.md') (Join-Path $SeqScratch '.stride_lite.md')
+$seqEvents = @(
+    @('pre',  $MarkerCC),
+    @('pre',  '{"tool_name":"Agent","tool_input":{"subagent_type":"stride-copilot-lite:task-explorer"}}'),
+    @('pre',  '{"tool_name":"Write","tool_input":{"file_path":"/p/.stride/lite-boundary","content":"stride-lite-boundary:after_task"}}'),
+    @('pre',  '{"tool_name":"Agent","tool_input":{"subagent_type":"stride-copilot-lite:task-reviewer"}}'),
+    @('post', '{"tool_name":"Edit","tool_input":{"file_path":"g/goal.md","new_string":"## Completion Summary"}}')
+)
+$fired = @()
+foreach ($ev in $seqEvents) {
+    # A stood-down route returns nothing; [regex]::Matches would throw on null.
+    $o = Run-Hook-Dir $SeqScratch $ev[0] $ev[1]
+    if ($o) {
+        foreach ($m in [regex]::Matches([string]$o, '"hook":"([a-z_]+)"')) { $fired += $m.Groups[1].Value }
+    }
+}
+Remove-Item -Recurse -Force $SeqScratch -ErrorAction SilentlyContinue
+$seqOrder = ($fired -join ' ')
+if ($fired.Count -eq 3 -and $seqOrder -eq 'before_task after_task after_goal') {
+    Ok "full workflow pass → 3 firings in order: $seqOrder"
+} else { Nope "full workflow pass should fire each hook once, in order" "count=$($fired.Count) order='$seqOrder'" }
+
 # --- Cleanup ---
 Remove-Item -Recurse -Force $Scratch -ErrorAction SilentlyContinue
 Remove-Item -Recurse -Force $FailScratch -ErrorAction SilentlyContinue

@@ -66,7 +66,7 @@ Refuses to clobber an existing `.stride_lite.md` unless `--force` is supplied.
 
 ### `stride-copilot-lite-workflow` — drive a goal through the full eight-step lifecycle
 
-Activate ONLY when you supply BOTH (a) explicit intent to work the goal end-to-end AND (b) a path to a goal directory. Without both signals the skill stays dormant — single-task requests and inspection requests should NOT activate it.
+Activate ONLY when you supply BOTH (a) explicit intent to work the goal end-to-end AND (b) a path to a goal directory. Without both signals the skill stays inactive — single-task requests and inspection requests should NOT activate it.
 
 Activation phrases (intent + path):
 
@@ -109,13 +109,17 @@ Generate the skeleton by activating `stride-copilot-lite-init` (see Skills below
 
 | Hook | Fires on | Blocking | Purpose |
 |---|---|:---:|---|
-| `## before_task` | `PreToolUse` + subagent dispatch of `stride-copilot-lite:task-explorer` (Step 3 of the workflow) | yes | Pull latest code, install deps, ensure clean working tree |
-| `## after_task` | `PreToolUse` + subagent dispatch of `stride-copilot-lite:task-reviewer` (Step 6) | yes | Run tests / lint / format before the reviewer evaluates the diff |
+| `## before_task` | `PreToolUse` + the workflow's boundary-marker write at Step 2 | yes | Pull latest code, install deps, ensure clean working tree |
+| `## after_task` | `PreToolUse` + the workflow's boundary-marker write at Step 5 | yes | Run tests / lint / format before the reviewer evaluates the diff |
 | `## after_goal` | `PostToolUse` + edit/write on a `goal.md` whose content contains `## Completion Summary` (Step 8) | advisory | Generate a PR, post artifacts, kick off a release pipeline |
 
-You do NOT need `.stride_lite.md` to use the create/init skills — only the `stride-copilot-lite-workflow` orchestrator activates the hooks.
+All three fire on **both** GitHub Copilot CLI and Claude Code. At each task boundary the workflow writes a one-line marker to `.stride/lite-boundary`, and that write is the interceptable event — Copilot CLI emits no skill- or agent-dispatch event to key on, so the marker is what makes `before_task` and `after_task` work there. The hook routes only when the path and the marker body both match, so writing that token into any other file, or naming it in a shell command, fires nothing. Under Claude Code the subagent dispatch is still recognised for goal directories driven by an older workflow skill, and each boundary still fires exactly once. `AGENTS.md` → "Hook intercept design" records the reasoning and the rejected alternatives.
 
-> **Copilot CLI hook caveat.** Copilot CLI does not currently emit a skill/agent dispatch event, so `## before_task` and `## after_task` are dormant under Copilot today. The `## after_goal` hook fires correctly via Copilot's edit/create tool matchers. The dormant hooks activate automatically when Copilot adds the equivalent intercept point — no plugin update required.
+A failing `before_task` or `after_task` stops the workflow on either runtime: the hook returns `exit 2` for Claude Code and a `permissionDecision: deny` object for Copilot CLI, so neither can continue past a hook the other blocked on. `after_goal` stays advisory — a `PostToolUse` hook cannot roll back the write it follows.
+
+The marker is written into **your** project at `.stride/lite-boundary`, alongside a small `.stride/lite-boundary-fired` record. Both are transient session state — add `.stride/` to your project's `.gitignore` so a workflow run does not leave them in a commit.
+
+You do NOT need `.stride_lite.md` to use the create/init skills — only the `stride-copilot-lite-workflow` orchestrator activates the hooks.
 
 ## Migration from stride-lite
 

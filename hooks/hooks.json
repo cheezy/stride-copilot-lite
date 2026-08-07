@@ -10,6 +10,26 @@
             "timeout": 60
           }
         ]
+      },
+      {
+        "matcher": "Edit|edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/stride-copilot-lite-hook.sh pre",
+            "timeout": 60
+          }
+        ]
+      },
+      {
+        "matcher": "Write|create",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/stride-copilot-lite-hook.sh pre",
+            "timeout": 60
+          }
+        ]
       }
     ],
     "PostToolUse": [
