@@ -348,15 +348,15 @@ else
 fi
 
 # ------------------------------------------------------------------
-# stride-lite-init template — byte-parity against skills/stride-lite-init/SKILL.md
+# stride-copilot-lite-init template — byte-parity against skills/stride-copilot-lite-init/SKILL.md
 # ------------------------------------------------------------------
 #
-# The "## Canonical template" block in skills/stride-lite-init/SKILL.md is the
+# The "## Canonical template" block in skills/stride-copilot-lite-init/SKILL.md is the
 # single source of truth for the .stride_lite.md body. Rather than hand-copy it
 # here (which silently drifts out of sync — the bug this rework fixes), we
 # extract it from the SKILL.md at runtime and assert the init flow writes it
 # back byte-for-byte.
-SKILL_MD="$REPO_ROOT/skills/stride-lite-init/SKILL.md"
+SKILL_MD="$REPO_ROOT/skills/stride-copilot-lite-init/SKILL.md"
 
 # Extract the .stride_lite.md body from the ````markdown … ```` fence inside the
 # "## Canonical template" section. The outer fence is four backticks so the
@@ -386,7 +386,7 @@ write_stride_lite_template() {
 }
 
 echo ""
-echo "stride-lite-init template"
+echo "stride-copilot-lite-init template"
 
 # Sandbox subdir for the init flow. $SANDBOX is the mktemp -d from earlier in
 # the file; the EXIT trap cleans the whole tree.

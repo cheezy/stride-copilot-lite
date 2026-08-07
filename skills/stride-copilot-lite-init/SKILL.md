@@ -1,10 +1,10 @@
 ---
-name: stride-lite-init
+name: stride-copilot-lite-init
 description: Use to scaffold a `.stride_lite.md` config file in the current working directory containing the four canonical sections (`## email`, `## before_task`, `## after_task`, `## after_goal`). The skill writes one file and prints a success message instructing the user to fill in the fields. Refuses to clobber an existing `.stride_lite.md` unless `--force` is supplied. The init skill itself never executes the hook sections (it is purely a scaffolder); the Copilot harness auto-fires them via `hooks/hooks.json` at the corresponding lifecycle points (before_task before the task-explorer dispatch, after_task before the task-reviewer dispatch, after_goal when the final task's goal.md Completion Summary is written). Never POSTs to any API. Activate when the user asks to initialize stride-lite, create a `.stride_lite.md` config, or scaffold the hook configuration file (optionally with `--force` to overwrite an existing file).
 skills_version: "1.0"
 ---
 
-# stride-lite-init
+# stride-copilot-lite-init
 
 Surface skill for the init flow. Writes a project-local `.stride_lite.md` file with the canonical four-section template, and prints a one-paragraph message asking the user to fill in the fields. The hook sections (`before_task`, `after_task`, `after_goal`) are **auto-fired by the Copilot harness via `hooks/hooks.json`** at the corresponding lifecycle points — this init skill only scaffolds them and never runs them itself. The format mirrors the full Stride plugin's `.stride.md` so users moving between the two plugins recognize the shape.
 
@@ -43,7 +43,7 @@ Parse the skill's invocation arguments for a single optional `--force` token. Tw
 - `` (empty) — no overwrite
 - `--force` — overwrite allowed
 
-Anything else is an error: print `"stride-lite-init: unknown argument: <arg>"` to stderr and exit non-zero. Do NOT fall back to a default behavior.
+Anything else is an error: print `"stride-copilot-lite-init: unknown argument: <arg>"` to stderr and exit non-zero. Do NOT fall back to a default behavior.
 
 ### Step 2 — Write `./.stride_lite.md` with collision check
 
@@ -55,7 +55,7 @@ Collision-check pattern (self-contained — this skill carries the full check; t
 TARGET=".stride_lite.md"
 
 if [ -e "$TARGET" ] && [ "$FORCE" -ne 1 ]; then
-  echo "stride-lite-init: .stride_lite.md already exists in the current directory" >&2
+  echo "stride-copilot-lite-init: .stride_lite.md already exists in the current directory" >&2
   echo "Re-run with --force to overwrite." >&2
   exit 1
 fi
@@ -94,7 +94,7 @@ The skill writes this exact text to `./.stride_lite.md`. Keep the section order 
 ````markdown
 # Stride Lite Configuration
 
-This file is created by the `stride-lite-init` skill. Fill in the fields below.
+This file is created by the `stride-copilot-lite-init` skill. Fill in the fields below.
 
 **Note:** The hook sections are auto-fired by the Copilot harness via `hooks/hooks.json` at the corresponding lifecycle points (`before_task` before the task-explorer dispatch, `after_task` before the task-reviewer dispatch, `after_goal` when the final task's goal.md Completion Summary is written). The format mirrors the full Stride plugin's `.stride.md` so your snippets transfer across plugins.
 
@@ -125,7 +125,7 @@ your-email@example.com
 - **Don't clobber an existing `.stride_lite.md` without `--force`.** Refuse and exit non-zero with a clear message pointing to the flag.
 - **Don't write the file anywhere except the cwd.** No absolute paths, no parent traversal, no `$HOME` or `$XDG_CONFIG_HOME` resolution.
 - **Don't make any API calls.** No `curl`, no Stride client, no network.
-- **Don't require `stride-lite-init` to have run before the other surface skills.** `stride-lite-create-goal` and `stride-lite-create-task` must continue to work without `.stride_lite.md` present.
+- **Don't require `stride-copilot-lite-init` to have run before the other surface skills.** `stride-copilot-lite-create-goal` and `stride-copilot-lite-create-task` must continue to work without `.stride_lite.md` present.
 
 ## Edge cases
 

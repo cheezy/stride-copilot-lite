@@ -1,6 +1,6 @@
 # slugify
 
-Pure function that turns an arbitrary free-text prompt into a filesystem-safe slug. Used by both surface skills (`stride-lite-create-goal` and `stride-lite-create-task`) to derive an artifact directory or file name from a user prompt. Mirrors the canonical `sti_slugify` algorithm from `stride-ideation/lib/filename.sh` (lines 27-44) so that prompts produce identical slugs across the two plugin families.
+Pure function that turns an arbitrary free-text prompt into a filesystem-safe slug. Used by both surface skills (`stride-copilot-lite-create-goal` and `stride-copilot-lite-create-task`) to derive an artifact directory or file name from a user prompt. Mirrors the canonical `sti_slugify` algorithm from `stride-ideation/lib/filename.sh` (lines 27-44) so that prompts produce identical slugs across the two plugin families.
 
 ## Contract
 

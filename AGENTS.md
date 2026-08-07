@@ -4,7 +4,7 @@ Project guidelines for AI agents working **on** the stride-copilot-lite plugin c
 
 ## What this plugin is
 
-A GitHub Copilot CLI plugin that turns a free-text prompt plus an optional requirements directory into Stride-shaped markdown documents on disk, then drives those documents through a file-based task lifecycle. It is the Copilot port of the Claude Code [stride-lite](https://github.com/cheezy/stride-lite) plugin — same on-disk contract, same field discipline, same `.stride_lite.md` config shape, adapted for Copilot's skill activation and hook intercept points. Four skills ship (the three create/init flows plus the `stride-lite-workflow` orchestrator), three subagents (`create-decomposer`, `task-explorer`, `task-reviewer`), four `lib/` helpers, and a `hooks/` enforcement layer (`hooks.json` + `stride-copilot-lite-hook.sh` + `stride-copilot-lite-hook.ps1`) registered with Copilot's PreToolUse/PostToolUse harness so the three `.stride_lite.md` hooks auto-fire at the right lifecycle intercept points. There is no kanban server, no claim/complete loop — the `.stride_lite.md` hooks ARE executed (by the Copilot harness) but everything happens locally against the file tree.
+A GitHub Copilot CLI plugin that turns a free-text prompt plus an optional requirements directory into Stride-shaped markdown documents on disk, then drives those documents through a file-based task lifecycle. It is the Copilot port of the Claude Code [stride-lite](https://github.com/cheezy/stride-lite) plugin — same on-disk contract, same field discipline, same `.stride_lite.md` config shape, adapted for Copilot's skill activation and hook intercept points. Four skills ship (the three create/init flows plus the `stride-copilot-lite-workflow` orchestrator), three subagents (`create-decomposer`, `task-explorer`, `task-reviewer`), four `lib/` helpers, and a `hooks/` enforcement layer (`hooks.json` + `stride-copilot-lite-hook.sh` + `stride-copilot-lite-hook.ps1`) registered with Copilot's PreToolUse/PostToolUse harness so the three `.stride_lite.md` hooks auto-fire at the right lifecycle intercept points. There is no kanban server, no claim/complete loop — the `.stride_lite.md` hooks ARE executed (by the Copilot harness) but everything happens locally against the file tree.
 
 ## Repository layout
 
@@ -16,10 +16,10 @@ stride-copilot-lite/
     stride-copilot-lite-hook.sh  ← bash executor for macOS/Linux
     stride-copilot-lite-hook.ps1 ← PowerShell executor for Windows (behavior-equivalent to .sh)
   skills/
-    stride-lite-create-goal/SKILL.md   ← goal-flow orchestrator
-    stride-lite-create-task/SKILL.md   ← single-task-flow orchestrator
-    stride-lite-init/SKILL.md          ← .stride_lite.md scaffold flow
-    stride-lite-workflow/SKILL.md      ← eight-step task lifecycle orchestrator
+    stride-copilot-lite-create-goal/SKILL.md   ← goal-flow orchestrator
+    stride-copilot-lite-create-task/SKILL.md   ← single-task-flow orchestrator
+    stride-copilot-lite-init/SKILL.md          ← .stride_lite.md scaffold flow
+    stride-copilot-lite-workflow/SKILL.md      ← eight-step task lifecycle orchestrator
   agents/
     create-decomposer.agent.md   ← subagent: prompt + requirements + mode → fenced YAML
     task-explorer.agent.md       ← subagent: reads a task file, appends-or-replaces ## Exploration Report section in place
@@ -59,11 +59,11 @@ When extending the plugin, add new helpers under `lib/`, new agents under `agent
 ## Hard rules for agents working on this codebase
 
 - **Never add Stride API calls.** Stride Lite's contract is "no network." If a feature seems to require an API call, it belongs in the full Stride plugin (`stride/` or `stride-copilot/`), not here.
-- **Never change the default paths** without coordinating with the README, the surface skills, both create skill files, AND the `stride-lite-workflow` SKILL.md's terminal-move step in the same commit. The two defaults plus the workflow's archive sibling are the cross-skill contract:
+- **Never change the default paths** without coordinating with the README, the surface skills, both create skill files, AND the `stride-copilot-lite-workflow` SKILL.md's terminal-move step in the same commit. The two defaults plus the workflow's archive sibling are the cross-skill contract:
   - `--requirements-dir` defaults to `docs/requirements`.
   - `--output-dir` defaults to `docs/implementation/PENDING` (the "in flight" location).
-  - `docs/implementation/IMPLEMENTED` (the archive location populated by `stride-lite-workflow`'s terminal PENDING→IMPLEMENTED move at goal close-out, ported from stride-lite v0.10.0). Both `--output-dir` and the archive base must move together if either changes; otherwise the workflow's `/PENDING/` substring substitution breaks silently.
-- **Never diverge the task markdown template** between `stride-lite-create-goal/SKILL.md` and `stride-lite-create-task/SKILL.md`. The two skills MUST render task markdown identically. The template is reproduced verbatim in both files so divergence is visible in code review.
+  - `docs/implementation/IMPLEMENTED` (the archive location populated by `stride-copilot-lite-workflow`'s terminal PENDING→IMPLEMENTED move at goal close-out, ported from stride-lite v0.10.0). Both `--output-dir` and the archive base must move together if either changes; otherwise the workflow's `/PENDING/` substring substitution breaks silently.
+- **Never diverge the task markdown template** between `stride-copilot-lite-create-goal/SKILL.md` and `stride-copilot-lite-create-task/SKILL.md`. The two skills MUST render task markdown identically. The template is reproduced verbatim in both files so divergence is visible in code review.
 - **Never raise the plugin version** without a matching CHANGELOG entry and a `plugin.json` bump in the same commit.
 - **Never list more than 8 child tasks in a goal.** The `create-decomposer` agent enforces this cap; downstream tools (the surface skills) reject decomposer output that violates it.
 - **Never drift from stride-lite's behavior on the on-disk markdown.** Feature parity means output parity: the smoke test fixtures (`fixtures/sample-requirements.md` + `fixtures/expected-output/`) port from stride-lite verbatim and any divergence requires a documented intentional change in CHANGELOG.

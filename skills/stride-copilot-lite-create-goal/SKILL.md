@@ -1,12 +1,12 @@
 ---
-name: stride-lite-create-goal
+name: stride-copilot-lite-create-goal
 description: Use to turn a user prompt + an optional requirements directory into a written goal directory under `docs/implementation/PENDING/<slug>/` containing one `goal.md` and one `taskN.md` per child task — rendered as readable markdown that mirrors the Stride goal/task field contracts, never POSTed to any API. Activate when the user asks to create a Stride-shaped goal, decompose a prompt into a goal, write a goal directory, or break an initiative into Stride-shaped tasks on disk — optionally with `--requirements-dir <path>` (default `docs/requirements`) or `--output-dir <path>` (default `docs/implementation/PENDING`). Terminal state is the written files; the skill does not push the user toward any follow-up action.
 skills_version: "1.0"
 ---
 
-# stride-lite-create-goal
+# stride-copilot-lite-create-goal
 
-Surface skill that drives the end-to-end create-goal flow for the stride-lite plugin: parse the invocation, load any requirements text, dispatch the `create-decomposer` subagent in `mode=goal`, slugify, resolve a unique output directory, and write a `goal.md` plus one `taskN.md` per child task. The output is plain markdown intended for human review — this skill never calls the Stride API.
+Surface skill that drives the end-to-end create-goal flow for the stride-copilot-lite plugin: parse the invocation, load any requirements text, dispatch the `create-decomposer` subagent in `mode=goal`, slugify, resolve a unique output directory, and write a `goal.md` plus one `taskN.md` per child task. The output is plain markdown intended for human review — this skill never calls the Stride API.
 
 ## What this skill does
 

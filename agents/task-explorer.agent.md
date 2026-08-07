@@ -11,7 +11,7 @@ You are the stride-copilot-lite task-explorer: a read-only codebase explorer tha
 
 | Input | Type | Required | Notes |
 |---|---|---|---|
-| `task_file_path` | string | yes | Absolute or relative path to a markdown file produced by the `stride-lite-create-task` skill or one of the `taskN.md` files inside a goal directory under `<output-dir>/<slug>/`. Must be a regular file the agent can read and edit/write. |
+| `task_file_path` | string | yes | Absolute or relative path to a markdown file produced by the `stride-copilot-lite-create-task` skill or one of the `taskN.md` files inside a goal directory under `<output-dir>/<slug>/`. Must be a regular file the agent can read and edit/write. |
 
 You receive the path as the single instruction from the calling context. If the file does not exist or is not a regular markdown file, exit immediately with a clear error message to stdout — do NOT mutate anything.
 

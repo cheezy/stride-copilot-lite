@@ -26,7 +26,7 @@ After install, the four skills (described below) are discoverable by description
 
 stride-copilot-lite exposes four skills — invoke them by matching natural-language prompts against the skill description blocks. Copilot has no Claude Code-style slash commands; the agent reads your prompt, matches against the four `SKILL.md` description blocks, and activates the best fit. The descriptions are tuned so the matcher reliably routes user intent to the right skill.
 
-### `stride-lite-create-goal` — decompose a prompt into a multi-task goal directory
+### `stride-copilot-lite-create-goal` — decompose a prompt into a multi-task goal directory
 
 Activate when you want to break a free-text initiative into 1–8 ordered, Stride-shaped tasks on disk. Produces `<output-dir>/<slug>/goal.md` + one `taskN.md` per child task.
 
@@ -39,7 +39,7 @@ Activation phrases:
 
 Default flags: `--requirements-dir docs/requirements`, `--output-dir docs/implementation/PENDING`.
 
-### `stride-lite-create-task` — render a single one-off task markdown file
+### `stride-copilot-lite-create-task` — render a single one-off task markdown file
 
 Activate when the work is genuinely one task and a full goal decomposition would be overkill. Produces `<output-dir>/tasks/<slug>.md`.
 
@@ -49,11 +49,11 @@ Activation phrases:
 - "Write a one-off task markdown file: <prompt>."
 - "Generate a Stride task spec from this prompt — just one task, no goal."
 
-Same default flags as `stride-lite-create-goal`. The per-task markdown template is byte-identical to the one in the goal flow (enforced by AGENTS.md cross-skill contract).
+Same default flags as `stride-copilot-lite-create-goal`. The per-task markdown template is byte-identical to the one in the goal flow (enforced by AGENTS.md cross-skill contract).
 
-### `stride-lite-init` — scaffold the `.stride_lite.md` hook config
+### `stride-copilot-lite-init` — scaffold the `.stride_lite.md` hook config
 
-Activate when you want to create the project-local `.stride_lite.md` config file (four canonical sections: `## email`, `## before_task`, `## after_task`, `## after_goal`). The skill writes the scaffold and prints a success message; it does NOT execute the hook sections itself (that's `stride-lite-workflow`'s job).
+Activate when you want to create the project-local `.stride_lite.md` config file (four canonical sections: `## email`, `## before_task`, `## after_task`, `## after_goal`). The skill writes the scaffold and prints a success message; it does NOT execute the hook sections itself (that's `stride-copilot-lite-workflow`'s job).
 
 Activation phrases:
 
@@ -64,7 +64,7 @@ Activation phrases:
 
 Refuses to clobber an existing `.stride_lite.md` unless `--force` is supplied.
 
-### `stride-lite-workflow` — drive a goal through the full eight-step lifecycle
+### `stride-copilot-lite-workflow` — drive a goal through the full eight-step lifecycle
 
 Activate ONLY when you supply BOTH (a) explicit intent to work the goal end-to-end AND (b) a path to a goal directory. Without both signals the skill stays dormant — single-task requests and inspection requests should NOT activate it.
 
@@ -105,7 +105,7 @@ your-email@example.com
 ```
 ```
 
-Generate the skeleton by activating `stride-lite-init` (see Skills below) or copy the example above. The `email` section is informational. The three hook sections are auto-fired by the harness via `hooks/hooks.json`:
+Generate the skeleton by activating `stride-copilot-lite-init` (see Skills below) or copy the example above. The `email` section is informational. The three hook sections are auto-fired by the harness via `hooks/hooks.json`:
 
 | Hook | Fires on | Blocking | Purpose |
 |---|---|:---:|---|
@@ -113,7 +113,7 @@ Generate the skeleton by activating `stride-lite-init` (see Skills below) or cop
 | `## after_task` | `PreToolUse` + subagent dispatch of `stride-copilot-lite:task-reviewer` (Step 6) | yes | Run tests / lint / format before the reviewer evaluates the diff |
 | `## after_goal` | `PostToolUse` + edit/write on a `goal.md` whose content contains `## Completion Summary` (Step 8) | advisory | Generate a PR, post artifacts, kick off a release pipeline |
 
-You do NOT need `.stride_lite.md` to use the create/init skills — only the `stride-lite-workflow` orchestrator activates the hooks.
+You do NOT need `.stride_lite.md` to use the create/init skills — only the `stride-copilot-lite-workflow` orchestrator activates the hooks.
 
 > **Copilot CLI hook caveat.** Copilot CLI does not currently emit a skill/agent dispatch event, so `## before_task` and `## after_task` are dormant under Copilot today. The `## after_goal` hook fires correctly via Copilot's edit/create tool matchers. The dormant hooks activate automatically when Copilot adds the equivalent intercept point — no plugin update required.
 
@@ -128,7 +128,7 @@ Differences to expect:
 - **`hooks/hooks.json` matchers.** stride-lite uses Claude Code matcher names (`Agent`, `Edit`, `Write`); stride-copilot-lite adds the Copilot lowercase forms via regex alternation (`Edit|edit`, `Write|create`). Both runtimes are covered by the same hooks.json.
 - **Dormant before_task/after_task on Copilot.** See the Copilot CLI hook caveat above. Under Claude Code these still fire normally.
 
-The on-disk artifacts produced by both plugins (goal directories, task markdown files, the embedded task template) are byte-identical — a goal directory created by stride-lite can be driven by `stride-copilot-lite:stride-lite-workflow` and vice versa.
+The on-disk artifacts produced by both plugins (goal directories, task markdown files, the embedded task template) are byte-identical — a goal directory created by stride-lite can be driven by `stride-copilot-lite:stride-copilot-lite-workflow` and vice versa.
 
 ## License
 

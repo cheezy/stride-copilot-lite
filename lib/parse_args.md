@@ -49,7 +49,7 @@ The defaults MUST be the literal strings `docs/requirements` and `docs/implement
 Why these specific defaults are non-negotiable:
 
 - `docs/requirements` is where requirements docs land (produced by ideation skills in sibling plugins and consumed by the surface skills here). Changing it breaks the implicit contract across the plugin families.
-- `docs/implementation/PENDING` is where `stride-lite-create-goal` lands its goal directories. The path includes `implementation/` to distinguish goal artifacts from raw requirements; downstream tooling (post-processing scripts, CI, archival, and the `stride-lite-workflow` terminal PENDING→IMPLEMENTED archive move) keys on this directory shape.
+- `docs/implementation/PENDING` is where `stride-copilot-lite-create-goal` lands its goal directories. The path includes `implementation/` to distinguish goal artifacts from raw requirements; downstream tooling (post-processing scripts, CI, archival, and the `stride-copilot-lite-workflow` terminal PENDING→IMPLEMENTED archive move) keys on this directory shape.
 
 ## Pitfalls
 
