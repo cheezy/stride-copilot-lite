@@ -587,6 +587,143 @@ else
   nope "task template metadata line" "a '> Type: … Complexity: …' line" "not found"
 fi
 
+# ------------------------------------------------------------------
+# task-enricher agent contract (W2025)
+# ------------------------------------------------------------------
+
+echo ""
+echo "task-enricher agent"
+
+ENRICHER="$REPO_ROOT/agents/task-enricher.agent.md"
+
+if [ -f "$ENRICHER" ]; then
+  ok "agents/task-enricher.agent.md exists"
+else
+  nope "task-enricher agent file" "agents/task-enricher.agent.md" "missing"
+fi
+
+# The house-style sections every agent file in this plugin carries, plus the two
+# this agent adds because it mutates the file it reads.
+for heading in \
+  '## Inputs' \
+  '## What this agent does' \
+  '## What this agent does NOT do' \
+  '## Sections this agent owns' \
+  '## Enrichment methodology' \
+  '## In-place mutation contract' \
+  '## Never copy secrets into the task file' \
+  '## Pitfalls'
+do
+  if grep -qF "$heading" "$ENRICHER" 2>/dev/null; then
+    ok "task-enricher has '$heading'"
+  else
+    nope "task-enricher section" "$heading" "not found"
+  fi
+done
+
+# Four-phase methodology, per the agent's own contract.
+ENRICHER_PHASES=$(grep -c '^### Phase [1-4] —' "$ENRICHER" 2>/dev/null || echo 0)
+assert_eq "task-enricher documents four phases" "$ENRICHER_PHASES" "4"
+
+# --- Tools grant ---
+# The grant is a security boundary, not a convenience: an agent that rewrites
+# files must not hold command execution, and must not hold a streaming-edit tool
+# either, because read-whole/write-once is what stops a failure partway through
+# leaving a half-enriched task file behind.
+ENRICHER_TOOLS=$(grep -m1 '^tools:' "$ENRICHER" 2>/dev/null)
+assert_eq "task-enricher tools grant is read/search/glob/write" \
+  "$ENRICHER_TOOLS" 'tools: ["read", "search", "glob", "write"]'
+
+if printf '%s' "$ENRICHER_TOOLS" | grep -qE 'run_terminal_cmd|bash|shell|terminal'; then
+  nope "task-enricher command execution" "no command-execution capability" "$ENRICHER_TOOLS"
+else
+  ok "task-enricher grant contains no command-execution capability"
+fi
+
+if printf '%s' "$ENRICHER_TOOLS" | grep -q '"edit"'; then
+  nope "task-enricher streaming edit" "no 'edit' tool (read-whole/write-once)" "$ENRICHER_TOOLS"
+else
+  ok "task-enricher grant omits 'edit', enforcing read-whole/write-once"
+fi
+
+# --- Owned ∪ Protected == the task template's headings, and disjoint ---
+# If the template gains or loses a heading, the enricher's table must move with
+# it: a heading it does not know about is one it will neither fill nor protect.
+TEMPLATE_HEADINGS=$(awk '
+  /^### taskN\.md template$/ { intmpl = 1; next }
+  intmpl && /^```$/          { exit }
+  intmpl && /^## /           { print }
+' "$REPO_ROOT/skills/stride-copilot-lite-create-goal/SKILL.md" | sort -u)
+
+ENRICHER_TABLE=$(awk '
+  /^## Sections this agent owns$/ { insec = 1; next }
+  insec && /^## /                 { exit }
+  insec && /^\| `## /             { print }
+' "$ENRICHER")
+
+OWNED=$(printf '%s\n' "$ENRICHER_TABLE" | sed -n 's/^| `\(## [^`]*\)`.*/\1/p' | sort -u)
+PROTECTED=$(printf '%s\n' "$ENRICHER_TABLE" | sed -n 's/^|[^|]*| `\(## [^`]*\)`.*/\1/p' | sort -u)
+CLAIMED=$(printf '%s\n%s\n' "$OWNED" "$PROTECTED" | grep -v '^$' | sort -u)
+
+assert_eq "enricher owned+protected covers every template heading" \
+  "$(printf '%s' "$CLAIMED" | md5 -q 2>/dev/null || printf '%s' "$CLAIMED" | md5sum | cut -d' ' -f1)" \
+  "$(printf '%s' "$TEMPLATE_HEADINGS" | md5 -q 2>/dev/null || printf '%s' "$TEMPLATE_HEADINGS" | md5sum | cut -d' ' -f1)"
+
+OVERLAP=$(comm -12 <(printf '%s\n' "$OWNED" | grep -v '^$') <(printf '%s\n' "$PROTECTED" | grep -v '^$'))
+if [ -z "$OVERLAP" ]; then
+  ok "enricher owned and protected sets are disjoint"
+else
+  nope "enricher owned/protected disjoint" "no overlap" "$OVERLAP"
+fi
+
+# The three intent sections must be protected, never fillable — they are what the
+# human or the decomposer said the task IS, not context derived from the code.
+for intent in '## Description' '## Why' '## What'; do
+  if printf '%s\n' "$PROTECTED" | grep -qxF "$intent"; then
+    ok "enricher protects $intent"
+  else
+    nope "enricher must protect $intent" "in the protected column" "not found"
+  fi
+done
+
+# --- The sparse rule is worded the same in both places ---
+# The workflow's gate and the agent must classify one section identically; a
+# definition that drifts is how a task ends up neither enriched nor reviewed.
+SPARSE_PHRASE='absent, empty, whitespace-only, or a `(none)` placeholder in any rendered shape'
+if grep -qF "$SPARSE_PHRASE" "$ENRICHER" \
+   && grep -qF "$SPARSE_PHRASE" "$REPO_ROOT/skills/stride-copilot-lite-workflow/SKILL.md"; then
+  ok "sparse rule worded identically in the agent and the workflow"
+else
+  nope "sparse rule wording" "the same definition in both files" "diverged or missing"
+fi
+
+# --- The workflow dispatches it, and only when sparse ---
+WF="$REPO_ROOT/skills/stride-copilot-lite-workflow/SKILL.md"
+if grep -q 'Step 1a — Enrichment check' "$WF"; then
+  ok "workflow has the Step 1a enrichment check"
+else
+  nope "workflow enrichment step" "### Step 1a — Enrichment check" "not found"
+fi
+
+if grep -q 'None of the four sparse' "$WF" && grep -q 'One or more sparse' "$WF"; then
+  ok "enrichment is conditional, not mandatory"
+else
+  nope "enrichment gating" "both sparse/not-sparse branches documented" "not found"
+fi
+
+# Ordering: enrichment must precede the matrix resolution, or a sparse file
+# counts zero key files and takes the skip-all row on precisely the task whose
+# metadata was too thin to judge.
+STEP1A_LINE=$(grep -n 'Step 1a — Enrichment check' "$WF" | head -1 | cut -d: -f1)
+RESOLVE_LINE=$(grep -n 'Now resolve the decision matrix' "$WF" | head -1 | cut -d: -f1)
+STEP2_LINE=$(grep -n 'Step 2 — Execute the' "$WF" | head -1 | cut -d: -f1)
+if [ -n "$STEP1A_LINE" ] && [ -n "$RESOLVE_LINE" ] && [ -n "$STEP2_LINE" ] \
+   && [ "$STEP1A_LINE" -lt "$RESOLVE_LINE" ] && [ "$RESOLVE_LINE" -lt "$STEP2_LINE" ]; then
+  ok "enrichment precedes matrix resolution, which precedes Step 2"
+else
+  nope "step ordering" "1a < resolve < Step 2" "1a=$STEP1A_LINE resolve=$RESOLVE_LINE step2=$STEP2_LINE"
+fi
+
 # Summary
 # ------------------------------------------------------------------
 

@@ -88,6 +88,16 @@ The workflow iterates each `taskN.md` in numeric order: select-next → `## befo
 
 An unreadable signal takes the full branch — absence of evidence is not evidence of a small task. Because this port fires `## before_task` / `## after_task` on the workflow's boundary writes, a skipped step also skips its hook, so on the `skip-all` row your `git pull` and test commands do not run for that task. Every skip is recorded in the task's `## Completion Summary` along with the rule that caused it, so a skip is never indistinguishable from a bug. The matrix mirrors the Claude Code plugin's, and `lib/select_workflow_branch.md` is its normative specification.
 
+### Automatic enrichment of sparse task files
+
+`stride-copilot-lite-create-goal` writes task files from your prompt with **no codebase access** — so `## Key files`, `## Patterns to follow` and `## Testing strategy` start out as informed guesses, and a hand-written task file may have nothing in them at all.
+
+Before acting on a task, the workflow checks whether `## Key files`, `## Acceptance criteria`, `## Verification steps` or `## Testing strategy` are empty or `(none)`. If any are, it dispatches the **`task-enricher`** subagent, which explores your codebase and fills them in place. It fills only the sections that were empty; everything else in the file — the title, `## Description`, `## Why`, `## What`, and every already-populated section — comes back byte-identical. It appends nothing, so it never collides with the `## Exploration Report` that `task-explorer` appends later.
+
+A fully-specified task file skips enrichment entirely. If the enricher cannot ground a section it leaves it `(none)` and says so, because a section left honestly empty is a signal to the implementer and one filled with plausible filler is a trap.
+
+The agent holds `read`, `search`, `glob` and `write` — no command execution, and deliberately no streaming-edit tool, so it reads the whole file and writes it once rather than leaving a half-enriched task file behind on a failure.
+
 ## Configuration
 
 stride-copilot-lite reads a project-local `.stride_lite.md` config file at the repository root. The file has four canonical sections, each a fenced bash block whose body the harness runs at the corresponding lifecycle point:
