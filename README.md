@@ -77,6 +77,17 @@ Activation phrases (intent + path):
 
 The workflow iterates each `taskN.md` in numeric order: select-next → `## before_task` hook → dispatch `stride-copilot-lite:task-explorer` → implement → `## after_task` hook → dispatch `stride-copilot-lite:task-reviewer` → review-loop (cap 3) → append `## Completion Summary` → next task. On the final task it also writes the goal-level `## Completion Summary` to `goal.md`, fires `## after_goal`, and moves the directory from `PENDING/` to `IMPLEMENTED/`.
 
+**The loop scales to the task.** A one-line fix should not pay two subagent dispatches and two hook runs, so a decision matrix reads each task's complexity and its `## Key files` count and picks a branch:
+
+| Complexity | Key files | Explore | Plan | Review |
+|---|---|:---:|:---:|:---:|
+| `small` | 0–1 | skip | skip | skip |
+| `small` | 2 or more | yes | skip | yes |
+| `medium` or `large` | any | yes | yes | yes |
+| absent or unreadable | any | yes | yes | yes |
+
+An unreadable signal takes the full branch — absence of evidence is not evidence of a small task. Because this port fires `## before_task` / `## after_task` on the workflow's boundary writes, a skipped step also skips its hook, so on the `skip-all` row your `git pull` and test commands do not run for that task. Every skip is recorded in the task's `## Completion Summary` along with the rule that caused it, so a skip is never indistinguishable from a bug. The matrix mirrors the Claude Code plugin's, and `lib/select_workflow_branch.md` is its normative specification.
+
 ## Configuration
 
 stride-copilot-lite reads a project-local `.stride_lite.md` config file at the repository root. The file has four canonical sections, each a fenced bash block whose body the harness runs at the corresponding lifecycle point:

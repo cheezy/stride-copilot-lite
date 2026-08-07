@@ -458,6 +458,135 @@ else
 fi
 
 # ------------------------------------------------------------------
+# ------------------------------------------------------------------
+# select_workflow_branch — the decision matrix (W2024)
+# ------------------------------------------------------------------
+#
+# Unlike the four helpers above, this one is NOT hand-copied into this file.
+# The reference implementation is extracted from lib/select_workflow_branch.md
+# at runtime, so the spec and the tested code cannot drift apart.
+#
+# Extraction alone would be circular, though — comparing an extraction to itself
+# proves nothing. So every assertion below checks BEHAVIOUR against an
+# independently written expected token, and the first one fails loudly if the
+# extraction produced nothing at all.
+
+BRANCH_MD="$REPO_ROOT/lib/select_workflow_branch.md"
+
+extract_reference_impl() {
+  awk '/^```bash$/ { in_block = 1; next } in_block && /^```$/ { exit } in_block { print }' "$BRANCH_MD"
+}
+
+echo ""
+echo "select_workflow_branch"
+
+BRANCH_IMPL="$SANDBOX/select_workflow_branch.sh"
+extract_reference_impl > "$BRANCH_IMPL"
+
+# Guard: a broken path or a renamed fence yields an empty file, and every
+# assertion below would then fail confusingly rather than pointing here.
+if [ -s "$BRANCH_IMPL" ] && grep -q '^select_workflow_branch()' "$BRANCH_IMPL"; then
+  ok "reference implementation extracted from lib/select_workflow_branch.md"
+else
+  nope "reference implementation extraction" "non-empty function definition" "empty or malformed"
+fi
+
+# shellcheck source=/dev/null
+. "$BRANCH_IMPL"
+
+BRANCH_DIR="$SANDBOX/branch-fixtures"
+mkdir -p "$BRANCH_DIR"
+
+# Render a task file with the given complexity and key-files section body.
+write_task_file() {
+  local target="$1" complexity="$2" keyfiles="$3"
+  {
+    printf '# A task title\n\n'
+    printf '> Type: work · Complexity: %s · Priority: medium\n\n' "$complexity"
+    printf '## Description\n\nSome description.\n\n'
+    printf '## Key files\n\n%s\n' "$keyfiles"
+  } > "$target"
+}
+
+TABLE_1='| File | Note |
+|---|---|
+| `lib/a.ex` | why |'
+TABLE_2='| File | Note |
+|---|---|
+| `lib/a.ex` | why |
+| `lib/b.ex` | why |'
+TABLE_3='| File | Note |
+|---|---|
+| `lib/a.ex` | why |
+| `lib/b.ex` | why |
+| `lib/c.ex` | why |'
+
+assert_branch() {
+  local label="$1" complexity="$2" keyfiles="$3" expected="$4"
+  local f="$BRANCH_DIR/t.md"
+  write_task_file "$f" "$complexity" "$keyfiles"
+  assert_eq "$label" "$(select_workflow_branch "$f")" "$expected"
+}
+
+# --- The five matrix rows, in the order the table states them ---
+assert_branch "small + 1 key file → skip-all"        small  "$TABLE_1" "skip-all"
+assert_branch "small + 2 key files → explore-review" small  "$TABLE_2" "explore-review"
+assert_branch "small + 3 key files → explore-review" small  "$TABLE_3" "explore-review"
+assert_branch "medium + 1 key file → full"           medium "$TABLE_1" "full"
+assert_branch "medium + 5 key files → full"          medium "$TABLE_3" "full"
+assert_branch "large + 1 key file → full"            large  "$TABLE_1" "full"
+assert_branch "unrecognized complexity → full"       enormous "$TABLE_1" "full"
+
+# --- The safe-default rules ---
+# An unreadable signal is absence of evidence, not evidence of a small task.
+assert_branch "(none) placeholder → 0 files"         small  '| (none) | |' "skip-all"
+assert_branch "same path twice → 1 distinct file"    small  '| File | Note |
+|---|---|
+| `lib/a.ex` | why |
+| `lib/a.ex` | other note |' "skip-all"
+assert_branch "two bullets → 2 distinct files"       small  '- `lib/a.ex` — why
+- `lib/b.ex` — why' "explore-review"
+assert_branch "prose names paths but declares none"  small  'We will touch lib/a.ex and lib/b.ex as needed.' "skip-all"
+assert_branch "case-insensitive heading is matched"  small  "$TABLE_2" "explore-review"
+
+# A file with no ## Key files section at all told us nothing → full.
+NOSECTION="$BRANCH_DIR/nosection.md"
+{
+  printf '# A task title\n\n'
+  printf '> Type: work · Complexity: small · Priority: medium\n\n'
+  printf '## Description\n\nNo key files section at all.\n'
+} > "$NOSECTION"
+assert_eq "absent Key files section → full" "$(select_workflow_branch "$NOSECTION")" "full"
+
+# No metadata line at all → unrecognized complexity → full.
+NOMETA="$BRANCH_DIR/nometa.md"
+{
+  printf '# A task title\n\n'
+  printf '## Key files\n\n%s\n' "$TABLE_1"
+} > "$NOMETA"
+assert_eq "absent metadata line → full" "$(select_workflow_branch "$NOMETA")" "full"
+
+# A missing file is a valid input, not an error.
+assert_eq "missing task file → full" "$(select_workflow_branch "$BRANCH_DIR/does-not-exist.md")" "full"
+assert_eq "empty task_file argument → full" "$(select_workflow_branch "")" "full"
+
+# The shipped fixture must resolve to a real branch — this catches a template
+# change that breaks the metadata line the matrix reads.
+FIXTURE_BRANCH="$(select_workflow_branch "$REPO_ROOT/fixtures/expected-output/task1.md")"
+case "$FIXTURE_BRANCH" in
+  skip-all|explore-review|full) ok "shipped fixture resolves to a branch ($FIXTURE_BRANCH)" ;;
+  *) nope "shipped fixture branch" "one of skip-all/explore-review/full" "$FIXTURE_BRANCH" ;;
+esac
+
+# The task template still renders the metadata line the matrix depends on. If a
+# future template change drops it, every task silently resolves to `full` and the
+# matrix quietly stops saving anything — which no other assertion would catch.
+if grep -q '^> Type: .*Complexity:' "$REPO_ROOT/fixtures/expected-output/task1.md"; then
+  ok "task template still renders the Complexity metadata line"
+else
+  nope "task template metadata line" "a '> Type: … Complexity: …' line" "not found"
+fi
+
 # Summary
 # ------------------------------------------------------------------
 

@@ -29,6 +29,7 @@ stride-copilot-lite/
     load_requirements_dir.md     ← read a directory, concatenate text files
     slugify.md                   ← normalize a title into a filesystem-safe slug
     resolve_output_path.md       ← produce a unique <base>/<slug>(.<ext>)? path
+    select_workflow_branch.md    ← resolve a task file to a decision-matrix branch token
   test/                          ← smoke.sh end-to-end harness
   fixtures/                      ← sample-requirements.md + expected-output/ for smoke.sh
   docs/                          ← long-form research notes (port-specific, not user-facing)
