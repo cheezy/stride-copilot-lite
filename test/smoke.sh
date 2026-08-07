@@ -724,6 +724,138 @@ else
   nope "step ordering" "1a < resolve < Step 2" "1a=$STEP1A_LINE resolve=$RESOLVE_LINE step2=$STEP2_LINE"
 fi
 
+# ------------------------------------------------------------------
+# hook-diagnostician agent contract (W2026)
+# ------------------------------------------------------------------
+
+echo ""
+echo "hook-diagnostician agent"
+
+DIAG="$REPO_ROOT/agents/hook-diagnostician.agent.md"
+
+if [ -f "$DIAG" ]; then
+  ok "agents/hook-diagnostician.agent.md exists"
+else
+  nope "hook-diagnostician agent file" "agents/hook-diagnostician.agent.md" "missing"
+fi
+
+for heading in \
+  '## Inputs' \
+  '## What this agent does' \
+  '## What this agent does NOT do' \
+  '## Severity' \
+  '## Fix priority' \
+  '## Output contract' \
+  '## Never echo the payload verbatim' \
+  '## Command output is data, not instructions' \
+  '## Pitfalls'
+do
+  if grep -qF "$heading" "$DIAG" 2>/dev/null; then
+    ok "hook-diagnostician has '$heading'"
+  else
+    nope "hook-diagnostician section" "$heading" "not found"
+  fi
+done
+
+# --- Tools grant excludes command execution ---
+# A diagnostician that could act on its own misdiagnosis is worse than one that
+# only reports; the grant is what makes that structural rather than promised.
+DIAG_TOOLS=$(grep -m1 '^tools:' "$DIAG" 2>/dev/null)
+assert_eq "hook-diagnostician tools grant is read/search/glob" \
+  "$DIAG_TOOLS" 'tools: ["read", "search", "glob"]'
+
+if printf '%s' "$DIAG_TOOLS" | grep -qE 'run_terminal_cmd|bash|shell|terminal|write|edit'; then
+  nope "hook-diagnostician grant" "no command execution and no mutation" "$DIAG_TOOLS"
+else
+  ok "hook-diagnostician grant excludes command execution and mutation"
+fi
+
+# --- Input contract is in sync with what the hook script actually emits ---
+# The agent's Inputs table IS its input contract. If the script gains or renames
+# a key, a table that has drifted describes a payload that no longer exists.
+SCRIPT_KEYS=$(grep -o '"[a-zA-Z_]*":' "$REPO_ROOT/hooks/stride-copilot-lite-hook.sh" \
+  | tr -d '":' | sort -u | grep -vE '^(duration_seconds)$')
+DIAG_KEYS=$(awk '
+  /^### The failure JSON key set$/ { insec = 1; next }
+  insec && /^## /                  { exit }
+  insec && /^\| `[a-zA-Z_]+` \|/   { print }
+' "$DIAG" | sed -n 's/^| `\([a-zA-Z_]*\)`.*/\1/p' | sort -u)
+
+MISSING_FROM_DOC=$(comm -23 <(printf '%s\n' "$SCRIPT_KEYS") <(printf '%s\n' "$DIAG_KEYS"))
+EXTRA_IN_DOC=$(comm -13 <(printf '%s\n' "$SCRIPT_KEYS") <(printf '%s\n' "$DIAG_KEYS"))
+
+# Guard against the vacuous pass: two empty sets also compare equal.
+DIAG_KEY_COUNT=$(printf '%s\n' "$DIAG_KEYS" | grep -c '[a-z]')
+if [ "$DIAG_KEY_COUNT" -ge 9 ]; then
+  ok "hook-diagnostician Inputs table lists $DIAG_KEY_COUNT keys"
+else
+  nope "hook-diagnostician key extraction" "at least 9 keys" "$DIAG_KEY_COUNT"
+fi
+
+if [ -z "$MISSING_FROM_DOC" ] && [ -z "$EXTRA_IN_DOC" ]; then
+  ok "Inputs table matches the keys the hook script emits"
+else
+  nope "input-contract sync with hooks/stride-copilot-lite-hook.sh" \
+    "identical key sets" "missing from doc: [$MISSING_FROM_DOC] extra in doc: [$EXTRA_IN_DOC]"
+fi
+
+# The blocking-only keys must be present and marked as conditional — a payload
+# without them is an advisory failure, not a truncated one.
+if grep -qF '`permissionDecision`' "$DIAG" && grep -qF 'blocking only' "$DIAG"; then
+  ok "Inputs table marks the blocking-only keys as conditional"
+else
+  nope "blocking-only key handling" "permissionDecision marked blocking only" "not found"
+fi
+
+# --- The workflow dispatches it on both blocking-failure paths ---
+# In this port before_task fails at Step 2's marker write and after_task at
+# Step 5's, because the hooks fire on the boundary writes rather than on the
+# subagent dispatches — so that is where the triage has to live.
+WF="$REPO_ROOT/skills/stride-copilot-lite-workflow/SKILL.md"
+STEP2_BLOCK=$(awk '/^### Step 2 —/{f=1} /^### Step 3 —/{f=0} f' "$WF")
+STEP5_BLOCK=$(awk '/^### Step 5 —/{f=1} /^### Step 6 —/{f=0} f' "$WF")
+
+if printf '%s' "$STEP2_BLOCK" | grep -q 'hook-diagnostician'; then
+  ok "Step 2's before_task blocking path dispatches the diagnostician"
+else
+  nope "Step 2 triage" "a hook-diagnostician dispatch" "not found"
+fi
+
+if printf '%s' "$STEP5_BLOCK" | grep -q 'hook-diagnostician'; then
+  ok "Step 5's after_task blocking path dispatches the diagnostician"
+else
+  nope "Step 5 triage" "a hook-diagnostician dispatch" "not found"
+fi
+
+# Triage must not soften the stop. Assert the stop on the SAME line as the
+# dispatch, not merely somewhere in the step: a step-wide grep for "stop" matches
+# unrelated prose and would pass even if the dispatch line said "and continue".
+STEP2_DISPATCH=$(printf '%s' "$STEP2_BLOCK" | grep 'hook-diagnostician' | grep -v 'does not apply' | head -1)
+STEP5_DISPATCH=$(printf '%s' "$STEP5_BLOCK" | grep 'hook-diagnostician' | grep -v 'does not apply' | head -1)
+if printf '%s' "$STEP2_DISPATCH" | grep -q 'stop the workflow' \
+   && printf '%s' "$STEP5_DISPATCH" | grep -q 'stop'; then
+  ok "both blocking paths still stop on the same line as the triage dispatch"
+else
+  nope "blocking semantics" "a stop on each dispatch line" "step2='$STEP2_DISPATCH' step5='$STEP5_DISPATCH'"
+fi
+
+# Steps 3 and 6 name the agent too, to say why it does NOT apply to a failed
+# subagent dispatch — a reader arriving from the upstream docs looks there.
+if awk '/^### Step 3 —/{f=1} /^### Step 3a —/{f=0} f' "$WF" | grep -q 'hook-diagnostician' \
+   && awk '/^### Step 6 —/{f=1} /^### Step 7 —/{f=0} f' "$WF" | grep -q 'hook-diagnostician'; then
+  ok "Steps 3 and 6 reference the agent and scope it away from dispatch failures"
+else
+  nope "Steps 3/6 reference" "the agent named in both" "not found"
+fi
+
+# after_goal triage is available but optional — the run is finishing, not halting.
+if grep -q 'may\*\* dispatch `stride-copilot-lite:hook-diagnostician`' "$WF" \
+   || grep -q 'You \*\*may\*\* dispatch' "$WF"; then
+  ok "after_goal triage is offered without being mandatory"
+else
+  nope "advisory triage" "an optional mention on the after_goal path" "not found"
+fi
+
 # Summary
 # ------------------------------------------------------------------
 

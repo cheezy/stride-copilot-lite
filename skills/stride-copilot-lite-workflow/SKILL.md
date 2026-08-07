@@ -128,7 +128,9 @@ The hook runs **before** the marker write completes. A failing `before_task` com
 
 You do **NOT** read `.stride_lite.md` or execute its hook sections directly in this step — the harness does that. Missing `.stride_lite.md`, a missing `## before_task` section, or an empty fenced block all degrade to a clean no-op (exit 0) so the workflow proceeds. A failing command emits a structured failure JSON on stdout for your Step 8 Completion Summary to reference.
 
-If the marker write is blocked by a `before_task` failure, surface the failing command and its stderr to the user, clear the activation marker, and stop the workflow. Do **not** proceed to Step 3, and do **not** retry the write to get past the hook — the block is the hook doing its job.
+If the marker write is blocked by a `before_task` failure: **dispatch `stride-copilot-lite:hook-diagnostician`** with the structured failure JSON the harness emitted, surface its prioritized fix plan to the user, clear the activation marker, and stop the workflow. Do **not** proceed to Step 3, and do **not** retry the write to get past the hook — the block is the hook doing its job.
+
+Triage does not change the outcome. The diagnostician reads the payload and returns a fix order; it never re-runs or repairs the failing command, and the workflow still stops. Adding triage to a blocking failure makes the stop *useful*, not optional. If the dispatch itself fails, fall back to surfacing the failing command and its stderr directly — a diagnostician that cannot run must not become a second reason the user learns nothing.
 
 ### Step 3 — Dispatch `stride-copilot-lite:task-explorer`
 
@@ -137,6 +139,8 @@ If the marker write is blocked by a `before_task` failure, surface the failing c
 Dispatch `stride-copilot-lite:task-explorer` as a subagent with the active task file's path as the prompt input. The explorer parses the task file's metadata (`## Key files`, `## Patterns to follow`, `## Where`, `## Testing strategy`), runs read-only codebase exploration, and appends/replaces a `## Exploration Report` section at the bottom of the task file (per the v0.6.0 contract).
 
 If the explorer dispatch fails (e.g., the agent surfaces a clear error and exits without mutation), clear the activation marker and stop the workflow, surfacing the error. The explorer is a hard prerequisite for high-quality implementation in Step 4.
+
+**A subagent dispatch failure is not a hook failure**, so `stride-copilot-lite:hook-diagnostician` does not apply here — it triages a `.stride_lite.md` command's structured failure JSON, and a failed dispatch produces none. In this port a `before_task` failure surfaces at **Step 2**, not here, because the hook fires on that step's boundary-marker write rather than on this dispatch; the triage lives where the failure does.
 
 ### Step 3a — Outline an implementation plan (`full` only)
 
@@ -168,6 +172,8 @@ stride-lite-boundary:after_task:<path to the active taskN.md>
 
 The harness routes that write to the `## after_task` section. Same blocking semantics — a failing command blocks the write and stops the workflow on both runtimes (`exit 2` plus `permissionDecision: deny`), so do not proceed to Step 6 and do not retry the write to get past it.
 
+If the marker write is blocked by an `after_task` failure, take the same path as Step 2: dispatch `stride-copilot-lite:hook-diagnostician` with the failure JSON, surface its fix plan, clear the activation marker and stop. This is the most common way a run halts once the blocking hooks actually fire, because `after_task` is where a user's test suite and linter live — and interleaved output from two tools is exactly what raw surfacing handles worst.
+
 **Re-entering this step is expected.** When Step 7 sends you back to Step 4 for another implementation round, Step 5 runs again and you write the marker again. Re-firing `after_task` is correct — the user's tests and linters must run against the revised code, not the code from the previous round.
 
 You do **NOT** execute `.stride_lite.md` hook sections directly in this step. The harness handles it; a failing command emits structured failure JSON for your Step 8 Completion Summary.
@@ -179,6 +185,8 @@ You do **NOT** execute `.stride_lite.md` hook sections directly in this step. Th
 Dispatch `stride-copilot-lite:task-reviewer` as a subagent with the active task file's path as the prompt input. The reviewer captures `git diff HEAD` (working tree vs HEAD), evaluates the diff against the task file's acceptance criteria / pitfalls / patterns / testing strategy, and appends/replaces a `## Review Report` section at the bottom of the task file (per the v0.7.0 contract).
 
 The reviewer emits a prose summary line AND a fenced ```json block. Step 7 parses the JSON to decide the next step.
+
+As at Step 3, a failed reviewer dispatch is not a hook failure and `stride-copilot-lite:hook-diagnostician` does not apply to it; an `after_task` failure surfaces at **Step 5**, where that hook actually fires.
 
 ### Step 7 — Review-loop decision
 
@@ -223,7 +231,7 @@ Worked example of the skip record, for a `small` task listing one key file:
   3. **Move the goal directory from `PENDING/` to `IMPLEMENTED/`.** After the `after_goal` hook has fired, archive the completed goal by moving the goal directory from `docs/implementation/PENDING/<slug>/` to `docs/implementation/IMPLEMENTED/<slug>/`. Four behavioral details:
 
      - **Timing.** This move happens AFTER `after_goal` fires — the user's hook sees the still-PENDING path, matching what the hook was scoped to handle. Never move before the hook.
-     - **After-goal-failure guard.** If the harness emitted a structured failure JSON for the `after_goal` hook (`"status": "failed"`), do NOT move the directory. Leave it in `PENDING/` so the user can inspect the failure and re-trigger. A clean no-op (no `after_goal` section, missing `.stride_lite.md`, empty fenced block) is NOT a failure — proceed with the move.
+     - **After-goal-failure guard.** If the harness emitted a structured failure JSON for the `after_goal` hook (`"status": "failed"`), do NOT move the directory. Leave it in `PENDING/` so the user can inspect the failure and re-trigger. You **may** dispatch `stride-copilot-lite:hook-diagnostician` on that payload if the output is hard to read, but it is optional here in a way it is not at Steps 2 and 5: `after_goal` is advisory, the workflow is finishing rather than halting, and nobody is blocked waiting on the answer. A clean no-op (no `after_goal` section, missing `.stride_lite.md`, empty fenced block) is NOT a failure — proceed with the move.
      - **Non-`/PENDING/` path.** If `goal_directory_path` (after stripping the trailing slash) does not contain `/PENDING/` as a directory segment — for example, the user passed a custom `--output-dir` to `the stride-copilot-lite-create-goal skill` and the goal lives at `docs/custom-archive/<slug>/` — log a warning to stderr (`stride-copilot-lite-workflow: goal directory not under PENDING — skipping move; you can move it manually to your archive location`) and skip the move. Do NOT fail the workflow.
      - **Move tool selection.** Try `git mv` first when (a) `git rev-parse --is-inside-work-tree` succeeds and (b) `git ls-files "$goal_path"` returns a non-empty list (the goal directory's files are tracked). This preserves rename history. Otherwise fall back to plain `mv`.
      - **Collision suffixing.** If the target `IMPLEMENTED/<slug>/` already exists, suffix the destination with `-2`, `-3`, ... up to a 1000-iteration cap, mirroring `lib/resolve_output_path.md`'s semantics exactly (start at `n=2`, probe with `[ ! -e "$candidate" ]`, never overwrite, cap exhaustion emits a stderr warning and skips the move). Never overwrite an existing IMPLEMENTED entry.

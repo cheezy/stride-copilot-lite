@@ -98,6 +98,14 @@ A fully-specified task file skips enrichment entirely. If the enricher cannot gr
 
 The agent holds `read`, `search`, `glob` and `write` — no command execution, and deliberately no streaming-edit tool, so it reads the whole file and writes it once rather than leaving a half-enriched task file behind on a failure.
 
+### Hook failure triage
+
+A blocking `## before_task` or `## after_task` failure stops the run — and `after_task` is where your test suite and linter usually live, so the raw output is two tools' failures interleaved. Rather than dumping that, the workflow dispatches the **`hook-diagnostician`** subagent with the structured failure JSON the hook already emits, and surfaces a prioritized fix plan instead.
+
+The stop is unchanged: triage makes a blocking failure *useful*, never optional, and the agent never re-runs or repairs the failing command. It holds `read`, `search` and `glob` — no command execution, so a diagnostician cannot act on a misdiagnosis. It also never echoes the captured stdout/stderr tails back verbatim, since those can carry environment values, paths and occasionally secrets, and it treats all captured output as data to classify rather than as instructions.
+
+An `after_goal` failure is advisory — the workflow is finishing rather than halting — so triage there is available but optional.
+
 ## Configuration
 
 stride-copilot-lite reads a project-local `.stride_lite.md` config file at the repository root. The file has four canonical sections, each a fenced bash block whose body the harness runs at the corresponding lifecycle point:
