@@ -18,6 +18,12 @@ Thumbs.db
 .stride/
 .stride_auth.md
 
+# Exploratory-testing session artifacts. They hold transcribed application
+# output and arrive UNTRACKED, so a project gate that stages everything before
+# committing would sweep them into a commit. Ignore before the first session —
+# .gitignore is inert for a path git already tracks.
+.exploratory/
+
 # This plugin's own marker directory: the orchestrator activation marker, the
 # boundary marker and its fired-record. All transient session state.
 .stride-copilot-lite/

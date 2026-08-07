@@ -962,6 +962,149 @@ else
   nope "telemetry redaction rule" "an explicit no-output/no-env rule" "not found"
 fi
 
+# ------------------------------------------------------------------
+# Gated exploratory-testing and harden integration (W2028)
+# ------------------------------------------------------------------
+
+echo ""
+echo "exploratory-testing integration"
+
+for step in '### Step 6a — Manual & exploratory testing (optional, gated)' \
+            '### Step 6b — Harden findings into regression checks (optional, gated)'; do
+  if grep -qF "$step" "$WF"; then
+    ok "workflow has '$(printf '%s' "$step" | sed 's/^### //')'"
+  else
+    nope "gated sub-step" "$step" "not found"
+  fi
+done
+
+# Both sub-steps must carry a decision summary, so the skip outcomes are stated
+# rather than left to be inferred from prose.
+DECISION_TABLES=$(grep -c '^| Condition | Action |' "$WF")
+if [ "$DECISION_TABLES" -ge 2 ]; then
+  ok "both gated sub-steps carry a decision-summary table ($DECISION_TABLES found)"
+else
+  nope "decision summaries" "at least 2 Condition/Action tables" "$DECISION_TABLES"
+fi
+
+# --- The never-dispatch list names every interactive surface plus the router ---
+# This is the regression guard on the whole safety design: the workflow never
+# prompts between steps, so an interactive surface would stall the drive until
+# the claim expired. Removing one silently re-opens that.
+# Scope the check to the never-dispatch TABLE, not the whole file: each of these
+# names also appears in surrounding prose, so a file-wide grep would still pass
+# after a table row was deleted — which is exactly the regression that matters.
+NEVER_TABLE=$(awk '
+  /^\*\*Never dispatch these/ { intbl = 1; next }
+  intbl && /^\| / { print; next }
+  intbl && /^$/ { next }
+  intbl && !/^\|/ { exit }
+' "$WF")
+# Match each surface as a ROW KEY — the table's first cell — not anywhere in the
+# table. One row's prose names another surface (the router row cites `pair`), so
+# a table-wide grep still passes after a row is deleted. Only the key is proof
+# the surface has its own entry.
+NEVER_KEYS=$(printf '%s\n' "$NEVER_TABLE" | sed -n 's/^| \(.*\) | .*/\1/p')
+missing_surface=""
+for surface in explore pair recon nightmare-headline; do
+  printf '%s\n' "$NEVER_KEYS" | grep -q "stride-exploratory-testing-$surface" \
+    || missing_surface="$missing_surface $surface"
+done
+if [ -z "$missing_surface" ]; then
+  ok "the never-dispatch list names explore, pair, recon and nightmare-headline"
+else
+  nope "never-dispatch list" "all four interactive surfaces named" "missing:$missing_surface"
+fi
+
+# The router skill is the surface most easily reached by mistake — the bare
+# plugin name resolves to it, so "dispatch the plugin" lands there.
+if printf '%s\n' "$NEVER_KEYS" | grep -qE 'router skill|routing skill' \
+   && grep -q 'Dispatch the named agent, never the plugin' "$WF"; then
+  ok "the router skill is named as never-dispatchable"
+else
+  nope "router skill" "the router skill named, with dispatch-the-agent-not-the-plugin" "not found"
+fi
+
+# The explorer must be named as the ONLY sanctioned session surface.
+if grep -q 'stride-copilot-exploratory-testing:explorer' "$WF"; then
+  ok "the explorer agent is named as the sanctioned session surface"
+else
+  nope "sanctioned surface" "the explorer agent named" "not found"
+fi
+
+# --- The affirmative is required, sourced from the user, never inferred ---
+if grep -qi 'never infer it and never supply it on the user' "$WF"; then
+  ok "the skill forbids inferring the authorized/non-production affirmative"
+else
+  nope "affirmative rule" "an explicit never-infer statement" "not found"
+fi
+
+if grep -q 'collected at activation' "$WF"; then
+  ok "the affirmative's collection point is named (activation)"
+else
+  nope "affirmative collection point" "a named collection point" "not found"
+fi
+
+# A localhost URL is the specific wrong inference worth naming.
+if grep -q 'localhost' "$WF"; then
+  ok "a localhost URL is explicitly rejected as evidence of authorization"
+else
+  nope "localhost rule" "localhost named as insufficient" "not found"
+fi
+
+# --- A session budget is required, in the installed agent's own unit ---
+if grep -qi 'probe' "$WF" && grep -qi 'budget' "$WF"; then
+  ok "a session budget is required and expressed in the agent's own unit"
+else
+  nope "session budget" "a budget requirement naming the unit" "not found"
+fi
+
+# --- Harden: drafts never reported as passing; gate must run clean first ---
+if grep -qi 'never report a drafted check as passing' "$WF" \
+   || grep -qi 'Never report a drafted check as passing' "$WF"; then
+  ok "harden states a drafted check is never reported as passing"
+else
+  nope "draft honesty rule" "an explicit never-report-as-passing statement" "not found"
+fi
+
+if grep -q 'across the whole suite' "$WF"; then
+  ok "a check enters the tree only after the gate runs clean across the whole suite"
+else
+  nope "gate precondition" "a whole-suite gate run required before the move" "not found"
+fi
+
+# --- Every gate falls through to a clean skip ---
+if grep -qi 'clean skip' "$WF"; then
+  ok "the gates are documented as falling through to a clean skip"
+else
+  nope "skip semantics" "an explicit clean-skip statement" "not found"
+fi
+
+# --- Bash scope covers the new commands ---
+BASH_SCOPE=$(awk '/^## Bash scope/{f=1} /^## Edge cases/{f=0} f' "$WF")
+for cmd in 'gate command' '`cp` and `rm`'; do
+  if printf '%s' "$BASH_SCOPE" | grep -qF "$cmd"; then
+    ok "Bash scope covers $cmd"
+  else
+    nope "Bash scope" "an allow-list entry for $cmd" "not found"
+  fi
+done
+
+# --- The artifact directory is gitignored ---
+if grep -q '^\.exploratory/$' "$REPO_ROOT/.gitignore"; then
+  ok ".exploratory/ is gitignored"
+else
+  nope "artifact directory" ".exploratory/ in .gitignore" "not found"
+fi
+
+# --- A blocked session's obstacle is not a finding ---
+if grep -q 'Record the obstacle as an obstacle, never as a finding' "$WF" \
+   && grep -q 'severity-bearing finding is a category error' "$WF"; then
+  ok "a blocked session's obstacle is recorded as an obstacle, not a finding"
+else
+  nope "blocked-session rule" "obstacle-not-finding stated with its reason" "not found"
+fi
+
 # Summary
 # ------------------------------------------------------------------
 

@@ -108,6 +108,23 @@ The stop is unchanged: triage makes a blocking failure *useful*, never optional,
 
 An `after_goal` failure is advisory — the workflow is finishing rather than halting — so triage there is available but optional.
 
+### Optional: exploratory testing and hardening
+
+If you also install [stride-copilot-exploratory-testing](https://github.com/cheezy/stride-copilot-exploratory-testing), the workflow gains two extra steps after the reviewer. Both are **gated and optional** — with the plugin absent, nothing changes and nothing fails.
+
+- **Manual & exploratory testing.** Your task's `## Testing strategy` manual-test entries become exploratory charters, and the plugin's `explorer` agent runs one budgeted session per charter against your running app. Today those entries just sit in the file as a note to a human who may never read them.
+- **Hardening.** Oracle-confirmed bugs from those sessions become drafted regression checks, staged under `.exploratory/checks/`.
+
+Three things are worth knowing before you turn this on:
+
+**You are asked once, at activation, whether the target is yours to test and is not production.** That affirmative is a safety control. It is never inferred — not from a `localhost` URL, not from anything a task file says — and if you do not give it, exploratory testing simply skips. Sessions exercise your app as a user would and never run destructive or production-mutating actions.
+
+**Drafted checks are drafts.** Hardening runs nothing, so a draft is never reported as passing. One enters your test tree only after the project's own gate command has come back clean across the whole suite; otherwise it stays staged with a follow-up noted. A regression check for a bug you have not fixed yet is *supposed* to fail, and a red check in the tree would take down the next reviewer dispatch and the next task's `## after_task`.
+
+**Add `.exploratory/` to your `.gitignore` before the first session.** Session artifacts hold transcribed application output and arrive untracked, so a gate that stages everything before committing would sweep them in. `.gitignore` is inert for a path git already tracks, so doing it first is the difference between the line working and doing nothing.
+
+Whatever ran — or did not — is recorded in the task's Completion Summary, including which sessions were partial and which did not happen.
+
 ## Configuration
 
 stride-copilot-lite reads a project-local `.stride_lite.md` config file at the repository root. The file has four canonical sections, each a fenced bash block whose body the harness runs at the corresponding lifecycle point:
