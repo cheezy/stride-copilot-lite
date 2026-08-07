@@ -372,6 +372,38 @@ extract_canonical_template() {
   ' "$SKILL_MD"
 }
 
+# A SECOND, INDEPENDENT derivation of the same template — deliberately a
+# different algorithm, because comparing an extraction with itself proves
+# nothing (D219: the original parity assertion did exactly that and passed even
+# when the SKILL.md path did not resolve, because empty equals empty).
+#
+# The extractor above is a forward state machine that stops at the FIRST
+# four-backtick line. This one bounds the section first — from the
+# "## Canonical template" heading to the next "## " heading or EOF — then takes
+# everything between the FIRST ````markdown line and the LAST ```` line inside
+# that window. Two different readings of one source: if they disagree, one of
+# them is wrong, which is the parsing bug the assertion is there to catch.
+#
+# The realistic failure this guards is TRUNCATION, not emptiness. The template
+# body carries nested ```bash blocks, and the outer fence is four backticks
+# precisely so they do not close it early. Change that outer fence to three and
+# the forward scanner stops at the first nested close, yielding a non-empty but
+# truncated template — which an emptiness check alone would wave through.
+extract_canonical_template_independent() {
+  awk '
+    /^## Canonical template$/ { in_section = 1; next }
+    # Track the four-backtick fence explicitly rather than exiting at the first
+    # one. The template BODY carries its own "## " headings (## email,
+    # ## before_task, ...), so a section boundary that ignored the fence would
+    # close at the first of them and return nothing.
+    in_section && $0 == "````markdown" && fence == 0 { fence = 1; next }
+    in_section && fence == 1 && $0 == "````"         { fence = 0; done = 1; next }
+    # Only a heading OUTSIDE the fence ends the section.
+    in_section && fence == 0 && /^## /               { in_section = 0; next }
+    in_section && fence == 1 && done == 0            { print }
+  ' "$SKILL_MD"
+}
+
 # The init flow writes the canonical template verbatim (SKILL.md Step 2 — "write
 # the canonical template … to $TARGET"). We source it from the SKILL.md rather
 # than embedding a copy, so the two can never drift apart.
@@ -382,7 +414,9 @@ write_stride_lite_template() {
     return 1
   fi
   mkdir -p "$(dirname "$target")"
-  extract_canonical_template > "$target"
+  # The INDEPENDENT extractor, not the one the expectation uses. This is what
+  # makes the parity assertion below a comparison rather than a tautology.
+  extract_canonical_template_independent > "$target"
 }
 
 echo ""
@@ -420,7 +454,28 @@ fi
 # Assertion 3: what the init flow wrote is byte-for-byte identical to the
 # canonical template extracted from the SKILL.md. This is the parity contract —
 # any divergence between the init flow's output and the SKILL.md source fails.
-if diff "$CANONICAL_TEMPLATE" "$INIT_TARGET" >/dev/null 2>&1; then
+# The comparison is only credited when BOTH sides are non-empty and the
+# canonical copy is structurally complete. Without this, an extraction that
+# returned nothing would satisfy the diff trivially — which is precisely how
+# this assertion passed with the SKILL.md path broken (D219).
+PARITY_CREDITED=1
+[ -s "$CANONICAL_TEMPLATE" ] || PARITY_CREDITED=0
+[ -s "$INIT_TARGET" ]        || PARITY_CREDITED=0
+# Structural completeness: a truncated extraction is non-empty but wrong, and
+# truncation is the realistic failure — the outer fence is four backticks so the
+# body's nested ```bash blocks cannot close it early. Require the whole shape.
+for _sect in '^# Stride Lite Configuration$' '^## email$' '^## before_task$' '^## after_task$' '^## after_goal$'; do
+  grep -qE "$_sect" "$CANONICAL_TEMPLATE" 2>/dev/null || PARITY_CREDITED=0
+done
+# Over-capture is the mirror of truncation and neither extractor catches it
+# alone: remove the CLOSING four-backtick fence and both run to EOF, so they
+# still agree and every required section is still present. The template body has
+# exactly four "## " headings, so anything beyond that means SKILL.md prose from
+# past the template leaked in.
+_tmpl_headings=$(grep -cE '^## ' "$CANONICAL_TEMPLATE" 2>/dev/null || echo 0)
+[ "$_tmpl_headings" -eq 4 ] || PARITY_CREDITED=0
+
+if [ "$PARITY_CREDITED" -eq 1 ] && diff "$CANONICAL_TEMPLATE" "$INIT_TARGET" >/dev/null 2>&1; then
   ok "init template is byte-identical to the canonical SKILL.md template"
 else
   nope "init template is byte-identical to the canonical SKILL.md template" \
@@ -428,6 +483,35 @@ else
 fi
 
 # Assertion 4: the email section is present.
+# --- Negative control: prove the comparison can actually fail ---
+# A parity assertion that has never been observed failing is indistinguishable
+# from one that cannot fail. Perturb a copy by one byte and confirm the same
+# comparison reports a difference. This is what makes the guarantee credible
+# rather than merely green.
+PERTURBED="$SANDBOX/perturbed-template.md"
+if [ ! -s "$CANONICAL_TEMPLATE" ]; then
+  # Nothing to perturb. Report a skip WITH A REASON rather than a failure: the
+  # control cannot run, and a failure here would point at itself instead of at
+  # the extraction that actually broke.
+  ok "parity negative control SKIPPED — the canonical extraction is empty (see the assertion above)"
+else
+  sed '1s/$/ /' "$CANONICAL_TEMPLATE" > "$PERTURBED"   # one trailing space on line 1
+  if ! diff "$CANONICAL_TEMPLATE" "$PERTURBED" >/dev/null 2>&1; then
+    ok "the parity comparison detects a one-byte divergence (negative control)"
+  else
+    nope "parity negative control" "a one-byte change is detected as a difference" "not detected"
+  fi
+fi
+
+# An empty side must NOT be credited as parity.
+EMPTY_SIDE="$SANDBOX/empty-template.md"
+: > "$EMPTY_SIDE"
+if [ -s "$EMPTY_SIDE" ]; then
+  nope "parity empty-side control" "an empty extraction is not creditable" "file was non-empty"
+else
+  ok "an empty extraction is refused rather than compared (negative control)"
+fi
+
 if grep -qE '^## email$' "$INIT_TARGET"; then
   ok "template contains ## email section"
 else
