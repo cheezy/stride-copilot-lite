@@ -1105,6 +1105,127 @@ else
   nope "blocked-session rule" "obstacle-not-finding stated with its reason" "not found"
 fi
 
+# ------------------------------------------------------------------
+# Gated deep security-considerations review (W2029)
+# ------------------------------------------------------------------
+
+echo ""
+echo "security-considerations review"
+
+if grep -q '^### Step 6c — Deep security-considerations review (optional, gated)' "$WF"; then
+  ok "workflow has the gated security sub-step"
+else
+  nope "security sub-step" "### Step 6c — Deep security-considerations review" "not found"
+fi
+
+SEC=$(awk '/^### Step 6c —/{f=1} /^### Step 7 —/{f=0} f' "$WF")
+
+# --- The gate is a conjunction, and the placeholder is explicitly excluded ---
+if printf '%s' "$SEC" | grep -q 'stride-copilot-security-review'; then
+  ok "the gate names the security-review plugin"
+else
+  nope "security gate" "the plugin named in the gate" "not found"
+fi
+
+# Both placeholder forms must be named as non-triggers: the template's own
+# `(none)` and the prose `None — ...` entry. Either one alone would leave the
+# other firing the specialist on an empty list.
+if printf '%s' "$SEC" | grep -q '(none)' && printf '%s' "$SEC" | grep -qE 'None —|None -'; then
+  ok "both placeholder forms are excluded from the gate"
+else
+  nope "placeholder exclusion" "(none) and 'None —' both named as non-triggers" "not found"
+fi
+
+if printf '%s' "$SEC" | grep -q '^| Condition | Action |'; then
+  ok "the security sub-step carries a decision-summary table"
+else
+  nope "security decision summary" "a Condition/Action table" "not found"
+fi
+
+# --- Verdict shape ---
+missing_status=""
+for st in mitigated partial unmitigated; do
+  printf '%s' "$SEC" | grep -q "$st" || missing_status="$missing_status $st"
+done
+if [ -z "$missing_status" ]; then
+  ok "the three verdict statuses are documented"
+else
+  nope "verdict statuses" "mitigated, partial and unmitigated" "missing:$missing_status"
+fi
+
+if printf '%s' "$SEC" | grep -qi 'evidence'; then
+  ok "each verdict carries evidence"
+else
+  nope "verdict evidence" "an evidence field" "not found"
+fi
+
+# --- Fail-closed on anomaly: never downgraded to passed ---
+# This step is itself a security control, so inability to confirm mitigation
+# must be treated as unaddressed. A downgrade here is the whole failure mode.
+if printf '%s' "$SEC" | grep -qi 'fail-closed'; then
+  ok "the sub-step states a fail-closed rule"
+else
+  nope "fail-closed rule" "an explicit fail-closed statement" "not found"
+fi
+
+if printf '%s' "$SEC" | grep -qiE 'malformed|empty|unparseable'; then
+  ok "an anomalous verdict set is addressed explicitly"
+else
+  nope "anomaly handling" "malformed/empty/unparseable verdicts addressed" "not found"
+fi
+
+# --- Escalation routes through Step 7's existing loop and cap ---
+STEP7=$(awk '/^### Step 7 —/{f=1} /^### Step 8 —/{f=0} f' "$WF")
+if printf '%s' "$STEP7" | grep -q 'Security-escalation branch'; then
+  ok "Step 7 has the security-escalation branch"
+else
+  nope "Step 7 escalation" "a Security-escalation branch" "not found"
+fi
+
+if printf '%s' "$STEP7" | grep -q 'changes_requested' \
+   && printf '%s' "$STEP7" | grep -q 'max_review_iterations'; then
+  ok "the escalation takes the changes_requested branch under the existing cap"
+else
+  nope "escalation routing" "changes_requested under max_review_iterations" "not found"
+fi
+
+# No second loop and no second cap — the pitfall this guards.
+if printf '%s' "$STEP7" | grep -qi 'no second loop and no second cap'; then
+  ok "no second review loop or cap is introduced"
+else
+  nope "single-loop rule" "an explicit no-second-loop statement" "not found"
+fi
+
+# --- The reviewer agent documents the verdict array ---
+TR="$REPO_ROOT/agents/task-reviewer.agent.md"
+if grep -q 'consideration_verdicts' "$TR"; then
+  ok "task-reviewer documents the consideration_verdicts array"
+else
+  nope "verdict array documentation" "consideration_verdicts in task-reviewer" "not found"
+fi
+
+# It must say the agent does NOT produce it — the generalist is not the specialist.
+if grep -qi 'you never produce it' "$TR"; then
+  ok "task-reviewer states it does not produce the verdicts itself"
+else
+  nope "verdict ownership" "an explicit you-never-produce-it statement" "not found"
+fi
+
+# Absent is not empty: an empty array means the specialist ran and found nothing,
+# which is treated as unaddressed rather than as a pass.
+if grep -q 'Absent is not the same as empty' "$TR"; then
+  ok "task-reviewer distinguishes an absent array from an empty one"
+else
+  nope "absent-vs-empty" "the distinction stated" "not found"
+fi
+
+# --- The dispatch frames its inputs as data, not instructions ---
+if printf '%s' "$SEC" | grep -qiE 'data to assess|as data, never'; then
+  ok "the considerations list and diff are framed as data to assess"
+else
+  nope "prompt-injection framing" "inputs framed as data, not instructions" "not found"
+fi
+
 # Summary
 # ------------------------------------------------------------------
 

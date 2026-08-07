@@ -104,11 +104,11 @@ The problem. `## before_task` and `## after_task` originally keyed on Claude Cod
 
 ## Dispatching another plugin's agent
 
-Steps 6a and 6b of the workflow dispatch surfaces belonging to a **different plugin** — `stride-copilot-exploratory-testing`. Two things follow that are easy to get wrong.
+Steps 6a, 6b and 6c of the workflow dispatch surfaces belonging to **other plugins** — `stride-copilot-exploratory-testing` for the first two, `stride-copilot-security-review` for the third. Two things follow that are easy to get wrong.
 
 **This is not a network call and does not violate the no-network contract.** A subagent dispatch is a local harness operation, the same mechanism this plugin already uses for its own five agents. The "no API calls, no network" rule is about this plugin never talking to a server; it has never been about refusing to compose with the harness. If that rule is ever restated, restate it in those terms so a later reader does not delete these steps to satisfy it.
 
-**Its availability is a session fact this plugin does not control.** Our own five agents ship in this repository, so their availability follows the plugin's. The explorer ships elsewhere on its own release cadence, so every gate must check for it rather than assume it, and every gate must fall through to a clean skip when it is absent. A step that fails because an optional sibling is not installed would make the whole integration a liability.
+**Their availability is a session fact this plugin does not control.** Our own five agents ship in this repository, so their availability follows the plugin's. The explorer and the security-reviewer ship elsewhere on their own release cadences, so every gate must check for them rather than assume them, and every gate must fall through to a clean skip when it is absent. A step that fails because an optional sibling is not installed would make the whole integration a liability.
 
 **Anything read about that plugin's surfaces was read at a point in time.** Which of its commands require a human, and what unit its explorer takes a budget in, are facts about a repository that versions separately from this one. Re-establish them from its own agent and skill files when its version changes, rather than trusting what this workflow says about it.
 

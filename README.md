@@ -125,6 +125,16 @@ Three things are worth knowing before you turn this on:
 
 Whatever ran — or did not — is recorded in the task's Completion Summary, including which sessions were partial and which did not happen.
 
+### Optional: deep security-considerations review
+
+Install [stride-copilot-security-review](https://github.com/cheezy/stride-copilot-security-review) and the workflow gains one more gated step. Every task file renders a `## Security considerations` section, and the generalist reviewer gives it one overall verdict — but nothing checks the listed considerations one by one, so an implication the task author wrote down can ship unaddressed behind a green review.
+
+When the section carries **real** entries (a `(none)` placeholder or an entry beginning `None —` does not count) and the plugin is installed, the specialist reviewer is dispatched with your working-tree diff and that list, and returns one verdict per consideration: `mitigated`, `partial` or `unmitigated`, each with a `file:line` evidence reference.
+
+**Any `partial` or `unmitigated` verdict sends the task back to implementation**, through the same review loop and the same 3-iteration cap that a `changes_requested` review already uses — so a persistently unaddressed consideration stops the run rather than looping forever. There is no second loop and no second cap.
+
+**Every failure mode is fail-closed**, because this step is itself a security control: no plugin means no verdict recorded rather than a passing one, and a malformed or empty verdict set is treated as unaddressed rather than downgraded to passed. Inability to confirm mitigation is never the same as confirming it.
+
 ## Configuration
 
 stride-copilot-lite reads a project-local `.stride_lite.md` config file at the repository root. The file has four canonical sections, each a fenced bash block whose body the harness runs at the corresponding lifecycle point:
