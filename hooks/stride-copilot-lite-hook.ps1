@@ -91,7 +91,11 @@ function Test-OrchestratorActive {
             }
         }
         if (-not $then) {
-            $then = (Get-Item -LiteralPath $OrchestratorMarker).LastWriteTimeUtc
+            # [System.IO.File], not Get-Item: the provider cmdlets are unreliable
+            # for dot-prefixed names here, and a throw would be swallowed by the
+            # catch below and read as "no active run" — silently disabling every
+            # hook whenever started_at could not be parsed.
+            $then = [System.IO.File]::GetLastWriteTimeUtc($OrchestratorMarker)
         }
         $now = [datetime]::UtcNow
         # A marker dated in the future is as untrustworthy as a stale one.

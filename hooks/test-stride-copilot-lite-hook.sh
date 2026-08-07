@@ -1,13 +1,23 @@
 #!/usr/bin/env bash
 # test-stride-copilot-lite-hook.sh — Smoke test for the bash hook executor.
 #
-# Exercises the three .stride_lite.md trigger conditions plus the env-var
-# defaulted-fallback and the cross-runtime field-name handling
-# (Claude Code snake_case `tool_name` vs Copilot CLI camelCase `toolName`).
+# Covers every routing branch of the three .stride_lite.md triggers, the
+# runtime-native boundary intercept and its near-misses, env-var derivation and
+# metacharacter inertness, the orchestrator-marker gate and its override, the
+# exit-code and permissionDecision contracts, and cross-runtime field-name
+# handling (Claude Code snake_case `tool_name` vs Copilot CLI camelCase
+# `toolName`).
 #
-# Not a full test suite — intentionally compact for the v0.1.0 release.
-# The stride-copilot/hooks/test-stride-hook.sh harness (60k lines, ~100 cases)
-# is the heavier reference if we need expanded coverage later.
+# It also runs the CROSS-EXECUTOR PARITY check: a shared fixture set through both
+# this executor and the .ps1, with the emitted JSON diffed. Where pwsh is absent
+# that reports a skip WITH A REASON rather than passing silently.
+#
+# Every fixture command is inert (`true`, `false`, `echo`, a `printf` into the
+# sandbox) and confined to a temp directory the suite creates and removes. There
+# are deliberately NO timing assertions — they would only add flakes.
+#
+# Run the .ps1 mirror too; the two exercise independent implementations of one
+# contract and each has caught bugs the other could not see.
 #
 # Usage: bash test-stride-copilot-lite-hook.sh
 # Exit:  0 = all assertions passed; 1 = one or more failed.
@@ -16,6 +26,7 @@ set -u  # NOT set -e — keep running after a failure to surface all problems
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HOOK_SCRIPT="$SCRIPT_DIR/stride-copilot-lite-hook.sh"
+REPO_ROOT_GUESS="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 if [ ! -x "$HOOK_SCRIPT" ]; then
   echo "test-stride-copilot-lite-hook.sh: $HOOK_SCRIPT not executable" >&2
@@ -687,6 +698,271 @@ else
 fi
 
 rm -rf "$GATE_SCRATCH"
+
+# ==================================================================
+# Section-parsing edge cases (W2031)
+# ==================================================================
+
+# --- Case 41: a present-but-missing section no-ops ---
+# Distinct from a missing .stride_lite.md (Case 1): the file exists and parses,
+# but the section this trigger routes to is not in it.
+echo "Case 41: missing section → no-op, exit 0, empty stdout"
+NOSECTION_SCRATCH=$(mktemp -d)
+write_marker "$NOSECTION_SCRATCH"
+printf '## after_goal\n\n```bash\necho only-after-goal\n```\n' > "$NOSECTION_SCRATCH/.stride_lite.md"
+out=$(run_hook_dir "$NOSECTION_SCRATCH" pre '{"tool_name":"Agent","tool_input":{"subagent_type":"stride-copilot-lite:task-explorer"}}')
+rc=$?
+if [ "$rc" -eq 0 ] && [ -z "$out" ]; then
+  ok "before_task section absent → exit 0, no stdout"
+else
+  nope "missing section must no-op" "rc=0 and empty stdout" "rc=$rc stdout='$out'"
+fi
+
+# --- Case 42: an empty fenced block no-ops ---
+# The section EXISTS and its fence parses; there is simply nothing to run. This
+# is the documented reduced-functionality shape, not an error.
+echo "Case 42: empty fenced block → no-op, exit 0, empty stdout"
+printf '## before_task\n\n```bash\n```\n\n## after_goal\n\n```bash\necho x\n```\n' > "$NOSECTION_SCRATCH/.stride_lite.md"
+out=$(run_hook_dir "$NOSECTION_SCRATCH" pre '{"tool_name":"Agent","tool_input":{"subagent_type":"stride-copilot-lite:task-explorer"}}')
+rc=$?
+if [ "$rc" -eq 0 ] && [ -z "$out" ]; then
+  ok "empty fenced block → exit 0, no stdout"
+else
+  nope "empty fenced block must no-op" "rc=0 and empty stdout" "rc=$rc stdout='$out'"
+fi
+
+# --- Case 43: a comment-only block no-ops ---
+# The scaffolded .stride_lite.md ships comment-only blocks, so this is the shape
+# a user has on day one — it must not be mistaken for a runnable command.
+echo "Case 43: comment-only block → no-op, exit 0, empty stdout"
+printf '## before_task\n\n```bash\n# just a comment\n# another\n```\n' > "$NOSECTION_SCRATCH/.stride_lite.md"
+out=$(run_hook_dir "$NOSECTION_SCRATCH" pre '{"tool_name":"Agent","tool_input":{"subagent_type":"stride-copilot-lite:task-explorer"}}')
+rc=$?
+if [ "$rc" -eq 0 ] && [ -z "$out" ]; then
+  ok "comment-only block → exit 0, no stdout"
+else
+  nope "comment-only block must no-op" "rc=0 and empty stdout" "rc=$rc stdout='$out'"
+fi
+rm -rf "$NOSECTION_SCRATCH"
+
+# --- Case 44: the command list stops at the first failure and partitions ---
+# commands_completed + [failed_command] + commands_remaining must reconstruct the
+# section exactly. A partition that drops or duplicates a command misreports what
+# actually ran, which is the whole value of the failure JSON.
+echo "Case 44: first failure stops the list; completed/remaining partition it"
+PARTITION_SCRATCH=$(mktemp -d)
+write_marker "$PARTITION_SCRATCH"
+cat > "$PARTITION_SCRATCH/.stride_lite.md" <<'PEOF'
+## before_task
+
+```bash
+true
+printf 'second\n' > /dev/null
+false
+echo never-runs-1
+echo never-runs-2
+```
+PEOF
+out=$(run_hook_dir "$PARTITION_SCRATCH" pre '{"tool_name":"Agent","tool_input":{"subagent_type":"stride-copilot-lite:task-explorer"}}')
+rc=$?
+# The two "never-runs" commands must be absent from stdout AND present in the
+# remaining array — proving the list stopped rather than merely reporting a code.
+if [ "$rc" -eq 2 ] \
+  && printf '%s' "$out" | grep -q '"failed_command":"false"' \
+  && printf '%s' "$out" | grep -q '"command_index":2' \
+  && printf '%s' "$out" | grep -q '"commands_completed":\["true","printf .second' \
+  && printf '%s' "$out" | grep -q '"commands_remaining":\["echo never-runs-1","echo never-runs-2"\]'; then
+  ok "stops at the first failure; completed(2) + failed + remaining(2) partition the list"
+else
+  nope "failure partition" "index 2, 2 completed, 2 remaining" "rc=$rc stdout='$out'"
+fi
+
+# The commands after the failure must genuinely not have run. Assert on an
+# observable side effect, not just on the JSON's own account of itself.
+PARTITION_PROBE="$PARTITION_SCRATCH/ran.txt"
+cat > "$PARTITION_SCRATCH/.stride_lite.md" <<PEOF
+## before_task
+
+\`\`\`bash
+false
+printf 'DID_RUN' > "$PARTITION_PROBE"
+\`\`\`
+PEOF
+rm -f "$PARTITION_PROBE"
+run_hook_dir "$PARTITION_SCRATCH" pre '{"tool_name":"Agent","tool_input":{"subagent_type":"stride-copilot-lite:task-explorer"}}' >/dev/null 2>&1
+if [ ! -f "$PARTITION_PROBE" ]; then
+  ok "commands after the failure genuinely did not execute"
+else
+  nope "post-failure execution" "no side effect from the remaining command" "probe file was written"
+fi
+rm -rf "$PARTITION_SCRATCH"
+
+# ==================================================================
+# Cross-executor JSON parity over a shared fixture set (W2031)
+# ==================================================================
+#
+# The env-value parity case above compares what the executors EXPORT. This
+# compares what they EMIT: the same fixtures through both, with the stdout JSON
+# diffed. Where PowerShell is absent this reports a skip WITH A REASON — an
+# absent run must stay distinguishable from a passing one.
+
+echo "Case 45: cross-executor JSON parity over a shared fixture set"
+
+if ! command -v pwsh > /dev/null 2>&1; then
+  ok "cross-executor JSON parity SKIPPED — pwsh not installed on this host"
+else
+  PARITY_SCRATCH=$(mktemp -d)
+
+  # Two configurations, because a divergence can hide in either outcome. The
+  # all-success config compares the success JSON; the all-failing one compares
+  # the failure JSON — including the permissionDecision keys, whose blocking-only
+  # rule is exactly the kind of thing one executor can get wrong alone.
+  write_parity_config() {
+    case "$1" in
+      success)
+        cat > "$PARITY_SCRATCH/.stride_lite.md" <<'PEOF'
+## before_task
+
+```bash
+echo before-ok
+```
+
+## after_task
+
+```bash
+echo after-ok
+```
+
+## after_goal
+
+```bash
+echo goal-ok
+```
+PEOF
+        ;;
+      failing)
+        cat > "$PARITY_SCRATCH/.stride_lite.md" <<'PEOF'
+## before_task
+
+```bash
+false
+```
+
+## after_task
+
+```bash
+true
+false
+echo never
+```
+
+## after_goal
+
+```bash
+false
+```
+PEOF
+        ;;
+    esac
+  }
+
+  # Volatile fields must be normalized out, or parity would fail on timing alone.
+  # duration_seconds is the only one; the pitfall list forbids timing assertions
+  # and this is why — it is not a behavioural difference.
+  normalize_json() {
+    sed -e 's/"duration_seconds":[0-9]*/"duration_seconds":N/g' \
+        -e 's/\r$//'
+  }
+
+  # Each fixture is "phase|payload". Every trigger shape, both runtimes' field
+  # casing, a blocking failure and the advisory path.
+  PARITY_FIXTURES=(
+    'pre|{"tool_name":"Agent","tool_input":{"subagent_type":"stride-copilot-lite:task-explorer"}}'
+    'pre|{"tool_name":"Write","tool_input":{"file_path":"/p/.stride-copilot-lite/lite-boundary","content":"stride-lite-boundary:before_task"}}'
+    'pre|{"toolName":"create","toolArgs":"{\"file_path\":\"/p/.stride-copilot-lite/lite-boundary\",\"content\":\"stride-lite-boundary:before_task\"}"}'
+    'pre|{"tool_name":"Write","tool_input":{"file_path":"/p/.stride-copilot-lite/lite-boundary","content":"stride-lite-boundary:after_task"}}'
+    'post|{"tool_name":"Edit","tool_input":{"file_path":"g/goal.md","new_string":"## Completion Summary"}}'
+    'post|{"toolName":"edit","toolArgs":"{\"file_path\":\"g/goal.md\",\"content\":\"## Completion Summary\"}"}'
+    'pre|{"tool_name":"Bash","tool_input":{"command":"ls"}}'
+    'pre|{"toolName":"create","toolArgs":"{\"file_path\":\"/p/notes.md\",\"content\":\"stride-lite-boundary:before_task\"}"}'
+  )
+
+  parity_mismatches=0
+  parity_checked=0
+  parity_nonempty=0
+  for cfg in success failing; do
+    write_parity_config "$cfg"
+    for fixture in "${PARITY_FIXTURES[@]}"; do
+      ph="${fixture%%|*}"
+      payload="${fixture#*|}"
+
+      # Reset the run state before EACH executor so both start identically —
+      # otherwise the fired-record handshake makes the second run diverge.
+      rm -rf "$PARITY_SCRATCH/.stride-copilot-lite"
+      write_marker "$PARITY_SCRATCH"
+      sh_out=$(printf '%s' "$payload" | CLAUDE_PROJECT_DIR="$PARITY_SCRATCH" "$HOOK_SCRIPT" "$ph" 2>/dev/null | normalize_json)
+
+      rm -rf "$PARITY_SCRATCH/.stride-copilot-lite"
+      write_marker "$PARITY_SCRATCH"
+      ps_out=$(printf '%s' "$payload" | CLAUDE_PROJECT_DIR="$PARITY_SCRATCH" \
+        pwsh -NoProfile -File "$SCRIPT_DIR/stride-copilot-lite-hook.ps1" "$ph" 2>/dev/null | normalize_json)
+
+      parity_checked=$(( parity_checked + 1 ))
+      [ -n "$sh_out" ] && parity_nonempty=$(( parity_nonempty + 1 ))
+      if [ "$sh_out" != "$ps_out" ]; then
+        parity_mismatches=$(( parity_mismatches + 1 ))
+        echo "        DIVERGED [$cfg] on [$ph] $payload" >&2
+        echo "          .sh : $sh_out" >&2
+        echo "          .ps1: $ps_out" >&2
+      fi
+    done
+  done
+  rm -rf "$PARITY_SCRATCH"
+
+  PARITY_EXPECTED=$(( ${#PARITY_FIXTURES[@]} * 2 ))
+  # Guard the vacuous pass: two executors that both emit nothing agree trivially.
+  # Several fixtures are deliberate no-ops, so require a healthy majority to have
+  # produced actual JSON before the comparison means anything.
+  if [ "$parity_checked" -eq "$PARITY_EXPECTED" ] && [ "$parity_mismatches" -eq 0 ] && [ "$parity_nonempty" -ge 8 ]; then
+    ok "both executors emitted identical JSON for all $parity_checked fixtures ($parity_nonempty non-empty)"
+  else
+    nope "cross-executor JSON parity" "0 mismatches over $PARITY_EXPECTED fixtures, 8+ non-empty" \
+      "$parity_mismatches mismatch(es), $parity_nonempty non-empty, $parity_checked checked"
+  fi
+fi
+
+# --- Case 46: the suite leaves no state behind ---
+# Every scratch dir is under the system temp dir and removed. A suite that leaks
+# a marker directory could arm hooks for a concurrent session.
+echo "Case 46: the suite leaves no state behind"
+# Check the dirs THIS suite created and removed inline. A pattern-based sweep of
+# the temp dir would mostly be testing the other suite's naming convention.
+STILL_PRESENT=""
+for d in "$DEDUPE_SCRATCH" "$SEQ_SCRATCH" "$ENV_SCRATCH" "$GATE_SCRATCH" \
+         "$NOSECTION_SCRATCH" "$PARTITION_SCRATCH" "${PARITY_SCRATCH:-}"; do
+  [ -n "$d" ] && [ -e "$d" ] && STILL_PRESENT="$STILL_PRESENT $d"
+done
+if [ -z "$STILL_PRESENT" ]; then
+  ok "every inline scratch directory was removed"
+else
+  nope "state left behind" "all inline scratch dirs removed" "$STILL_PRESENT"
+fi
+
+# The two trap-managed dirs must actually be covered by the EXIT trap, since
+# they cannot be checked after the fact from inside the run.
+TRAP_LINE=$(trap -p EXIT)
+if printf '%s' "$TRAP_LINE" | grep -q 'SCRATCH' && printf '%s' "$TRAP_LINE" | grep -q 'FAIL_SCRATCH'; then
+  ok "the EXIT trap removes both long-lived scratch directories"
+else
+  nope "cleanup trap" "an EXIT trap covering SCRATCH and FAIL_SCRATCH" "$TRAP_LINE"
+fi
+
+# The repository itself must be untouched — no marker written into the checkout.
+if [ ! -e "$REPO_ROOT_GUESS/.stride-copilot-lite" ]; then
+  ok "no marker directory created in the repository checkout"
+else
+  nope "repository state" "no .stride-copilot-lite/ in the checkout" "present"
+fi
 
 # --- Summary ---
 echo ""

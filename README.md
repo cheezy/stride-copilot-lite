@@ -193,6 +193,22 @@ Differences to expect:
 
 The on-disk artifacts produced by both plugins (goal directories, task markdown files, the embedded task template) are byte-identical — a goal directory created by stride-lite can be driven by `stride-copilot-lite:stride-copilot-lite-workflow` and vice versa.
 
+## Running the test suites
+
+Three suites, all pure shell/PowerShell — no test framework, no network, no dependencies beyond what the plugin itself needs.
+
+```bash
+bash test/smoke.sh                             # lib/ helpers, the decision matrix, agent contracts
+bash hooks/test-stride-copilot-lite-hook.sh    # the bash hook executor
+pwsh -File hooks/test-stride-copilot-lite-hook.ps1   # the PowerShell hook executor
+```
+
+Each exits `0` when every assertion passes and `1` on the first failure, printing the failing case with its expected and actual values to stderr. Run all three before opening a PR.
+
+**Both hook suites are needed, not one or the other.** They exercise two independent implementations of the same contract, and each has caught bugs the other could not see. The bash suite additionally runs a **cross-executor parity check**: it feeds a shared fixture set through both executors and diffs the emitted JSON, so a change that alters one runtime's behaviour without the other fails there rather than in the field. On a host without `pwsh` that check reports a **skip with a reason** rather than passing silently — an absent run stays distinguishable from a passing one.
+
+Every fixture command is inert (`true`, `false`, `echo`, a `printf` into the sandbox) and confined to a temporary directory the suite creates and removes. The suites write nothing into your checkout and leave no marker directory behind, both of which they assert before finishing.
+
 ## License
 
 [MIT](LICENSE) — Copyright (c) 2026 Jeff Morgan.

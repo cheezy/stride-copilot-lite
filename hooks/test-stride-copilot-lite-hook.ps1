@@ -1,9 +1,11 @@
 # test-stride-copilot-lite-hook.ps1 — Smoke test for the PowerShell hook executor.
 #
-# Mirrors test-stride-copilot-lite-hook.sh — exercises the three .stride_lite.md
-# trigger conditions plus the env-var defaulted-fallback and cross-runtime
-# field-name handling (Claude Code snake_case `tool_name` vs Copilot CLI
-# camelCase `toolName`).
+# Mirrors the bash harness case-for-case against the PowerShell executor. The two
+# exercise independent implementations of one contract, and each has caught bugs
+# the other could not see — run both.
+#
+# Every fixture command is inert and confined to a temp directory the suite
+# creates and removes. No timing assertions, by design.
 #
 # Usage: pwsh test-stride-copilot-lite-hook.ps1
 # Exit:  0 = all assertions passed; 1 = one or more failed.
@@ -504,6 +506,176 @@ if ($gatedRc -eq 0 -and -not $gatedOut -and $armedOut -match '"hook":"after_goal
 } else { Nope "advisory trigger must be gated identically" "gatedRc=$gatedRc gated='$gatedOut' armed='$armedOut'" }
 
 Remove-Item -Recurse -Force $GateScratch -ErrorAction SilentlyContinue
+
+# ==================================================================
+# Coverage parity with the bash harness (W2031)
+# ==================================================================
+
+# --- Case 35: Copilot lowercase 'edit' triggers after_goal ---
+Write-Host "Case 35: Copilot lowercase 'edit' triggers after_goal"
+$out = Run-Hook 'post' '{"toolName":"edit","tool_input":{"file_path":"goal.md","new_string":"## Completion Summary"}}'
+if ($out -match '"hook":"after_goal"') {
+    Ok "Copilot 'edit' + goal.md + Completion Summary → after_goal fires"
+} else { Nope "Copilot lowercase 'edit'" "stdout='$out'" }
+
+# --- Case 36: Agent dispatch to a non-stride-copilot-lite subagent → no-op ---
+Write-Host "Case 36: Agent with another subagent_type → no-op"
+$out = Run-Hook 'pre' '{"tool_name":"Agent","tool_input":{"subagent_type":"Explore"}}'
+if (-not $out) { Ok "Agent + non-matching subagent_type → no-op" }
+else { Nope "non-matching subagent_type should no-op" "stdout='$out'" }
+
+# --- Case 37: CLAUDE_PROJECT_DIR unset → falls back to the current directory ---
+Write-Host "Case 37: env-var defaulted-fallback when CLAUDE_PROJECT_DIR unset"
+$savedDir = $env:CLAUDE_PROJECT_DIR
+$savedLoc = Get-Location
+Remove-Item Env:\CLAUDE_PROJECT_DIR -ErrorAction SilentlyContinue
+Set-Location $Scratch
+$out = '{"tool_name":"Agent","tool_input":{"subagent_type":"stride-copilot-lite:task-explorer"}}' |
+    pwsh -NoProfile -File $HookScript pre 2>$null
+Set-Location $savedLoc
+if ($savedDir) { $env:CLAUDE_PROJECT_DIR = $savedDir }
+if ($out -match '"hook":"before_task"') {
+    Ok "unset CLAUDE_PROJECT_DIR + cwd .stride_lite.md → before_task fires"
+} else { Nope "CLAUDE_PROJECT_DIR fallback" "stdout='$out'" }
+
+# --- Case 38: the failure JSON carries no exported environment values ---
+Write-Host "Case 38: failure JSON carries no exported environment values"
+$LeakScratch = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "stride-copilot-lite-leak-$([System.Guid]::NewGuid())")
+New-Item -ItemType Directory -Force -Path (Join-Path $LeakScratch 'g') | Out-Null
+Write-Marker $LeakScratch
+Set-Content -LiteralPath (Join-Path $LeakScratch 'g/goal.md') -Value '# Secret Goal Title' -Encoding UTF8
+Set-Content -LiteralPath (Join-Path $LeakScratch 'g/task2.md') -Value '# Secret Task Title' -Encoding UTF8
+Set-Content -LiteralPath (Join-Path $LeakScratch '.stride_lite.md') -Encoding UTF8 -Value @"
+## before_task
+
+``````bash
+false
+``````
+"@
+$out = Run-Hook-Dir $LeakScratch 'pre' '{"tool_name":"Write","tool_input":{"file_path":"/p/.stride-copilot-lite/lite-boundary","content":"stride-lite-boundary:before_task:g/task2.md"}}'
+Remove-Item -Recurse -Force $LeakScratch -ErrorAction SilentlyContinue
+if ($out -match '"status":"failed"' -and $out -notmatch 'Secret Task Title' `
+    -and $out -notmatch 'Secret Goal Title' -and $out -notmatch 'TASK_TITLE' -and $out -notmatch 'GOAL_SLUG') {
+    Ok "failure JSON contains no derived env values"
+} else { Nope "failure JSON must not carry env values" "stdout='$out'" }
+
+# --- Case 39: unparseable started_at falls back to the file's mtime ---
+Write-Host "Case 39: marker with unparseable started_at falls back to file mtime"
+$MtimeScratch = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "stride-copilot-lite-mtime-$([System.Guid]::NewGuid())")
+New-Item -ItemType Directory -Force -Path (Join-Path $MtimeScratch '.stride-copilot-lite') | Out-Null
+Set-Content -LiteralPath (Join-Path $MtimeScratch '.stride_lite.md') -Encoding UTF8 -Value @"
+## before_task
+
+``````bash
+echo MTIME_OK
+``````
+"@
+$mf = Join-Path (Join-Path $MtimeScratch '.stride-copilot-lite') '.orchestrator_active'
+[System.IO.File]::WriteAllText($mf, '{"session_id":"harness","started_at":"not-a-timestamp","pid":1}')
+[System.IO.File]::SetLastWriteTimeUtc($mf, [datetime]::UtcNow)
+$freshOut = Run-Hook-Dir $MtimeScratch 'pre' $GateBlocking
+[System.IO.File]::SetLastWriteTimeUtc($mf, [datetime]::UtcNow.AddSeconds(-14500))
+$staleOut = Run-Hook-Dir $MtimeScratch 'pre' $GateBlocking
+Remove-Item -Recurse -Force $MtimeScratch -ErrorAction SilentlyContinue
+if ($freshOut -match '"hook":"before_task"' -and -not $staleOut) {
+    Ok "unparseable started_at → mtime decides freshness in both directions"
+} else { Nope "mtime fallback must judge freshness" "fresh='$freshOut' stale='$staleOut'" }
+
+# --- Cases 40-42: section-parsing edge cases ---
+$EdgeScratch = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "stride-copilot-lite-edge-$([System.Guid]::NewGuid())")
+New-Item -ItemType Directory -Force -Path $EdgeScratch | Out-Null
+Write-Marker $EdgeScratch
+$explorerPayload = '{"tool_name":"Agent","tool_input":{"subagent_type":"stride-copilot-lite:task-explorer"}}'
+
+Write-Host "Case 40: missing section → no-op, exit 0, empty stdout"
+Set-Content -LiteralPath (Join-Path $EdgeScratch '.stride_lite.md') -Encoding UTF8 -Value @"
+## after_goal
+
+``````bash
+echo only-after-goal
+``````
+"@
+$out = Run-Hook-Dir $EdgeScratch 'pre' $explorerPayload
+$rc = $LASTEXITCODE
+if ($rc -eq 0 -and -not $out) { Ok "before_task section absent → exit 0, no stdout" }
+else { Nope "missing section must no-op" "rc=$rc stdout='$out'" }
+
+Write-Host "Case 41: empty fenced block → no-op, exit 0, empty stdout"
+Set-Content -LiteralPath (Join-Path $EdgeScratch '.stride_lite.md') -Encoding UTF8 -Value @"
+## before_task
+
+``````bash
+``````
+"@
+$out = Run-Hook-Dir $EdgeScratch 'pre' $explorerPayload
+$rc = $LASTEXITCODE
+if ($rc -eq 0 -and -not $out) { Ok "empty fenced block → exit 0, no stdout" }
+else { Nope "empty fenced block must no-op" "rc=$rc stdout='$out'" }
+
+Write-Host "Case 42: comment-only block → no-op, exit 0, empty stdout"
+Set-Content -LiteralPath (Join-Path $EdgeScratch '.stride_lite.md') -Encoding UTF8 -Value @"
+## before_task
+
+``````bash
+# just a comment
+# another
+``````
+"@
+$out = Run-Hook-Dir $EdgeScratch 'pre' $explorerPayload
+$rc = $LASTEXITCODE
+if ($rc -eq 0 -and -not $out) { Ok "comment-only block → exit 0, no stdout" }
+else { Nope "comment-only block must no-op" "rc=$rc stdout='$out'" }
+
+# --- Case 43: first failure stops the list; completed/remaining partition it ---
+Write-Host "Case 43: first failure stops the list; completed/remaining partition it"
+Set-Content -LiteralPath (Join-Path $EdgeScratch '.stride_lite.md') -Encoding UTF8 -Value @"
+## before_task
+
+``````bash
+true
+printf 'second\n' > /dev/null
+false
+echo never-runs-1
+echo never-runs-2
+``````
+"@
+$out = Run-Hook-Dir $EdgeScratch 'pre' $explorerPayload
+$rc = $LASTEXITCODE
+if ($rc -eq 2 -and $out -match '"failed_command":"false"' -and $out -match '"command_index":2' `
+    -and $out -match '"commands_remaining":\["echo never-runs-1","echo never-runs-2"\]') {
+    Ok "stops at the first failure; completed(2) + failed + remaining(2) partition the list"
+} else { Nope "failure partition" "rc=2, index 2, 2 remaining" "rc=$rc stdout='$out'" }
+
+# The remaining commands must genuinely not have run — assert a side effect.
+$ranProbe = Join-Path $EdgeScratch 'ran.txt'
+Set-Content -LiteralPath (Join-Path $EdgeScratch '.stride_lite.md') -Encoding UTF8 -Value @"
+## before_task
+
+``````bash
+false
+printf 'DID_RUN' > "$ranProbe"
+``````
+"@
+Remove-Item -LiteralPath $ranProbe -ErrorAction SilentlyContinue
+$null = Run-Hook-Dir $EdgeScratch 'pre' $explorerPayload
+if (-not (Test-Path -LiteralPath $ranProbe)) {
+    Ok "commands after the failure genuinely did not execute"
+} else { Nope "post-failure execution" "no side effect" "probe file was written" }
+Remove-Item -Recurse -Force $EdgeScratch -ErrorAction SilentlyContinue
+
+# --- Case 44: the suite leaves no state behind ---
+Write-Host "Case 44: the suite leaves no state behind"
+$stillPresent = @()
+foreach ($d in @($DedupeScratch, $SeqScratch, $EnvScratch, $GateScratch, $LeakScratch, $MtimeScratch, $EdgeScratch)) {
+    if ($d -and (Test-Path -LiteralPath $d)) { $stillPresent += $d }
+}
+if ($stillPresent.Count -eq 0) { Ok "every inline scratch directory was removed" }
+else { Nope "state left behind" "$($stillPresent -join ', ')" }
+
+$repoRoot = Split-Path -Parent $ScriptDir
+if (-not (Test-Path -LiteralPath (Join-Path $repoRoot '.stride-copilot-lite'))) {
+    Ok "no marker directory created in the repository checkout"
+} else { Nope "repository state" "no .stride-copilot-lite/ in the checkout" }
 
 # --- Cleanup ---
 Remove-Item -Recurse -Force $Scratch -ErrorAction SilentlyContinue
