@@ -2,17 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [Unreleased]
-
-### Fixed — the failed-verdict `note` rule the server already enforces (D240)
-
-This port's task-reviewer prompt described `note` as optional on every section verdict. The completion API has required it on a `"failed"` verdict since D231, and enforces that **unconditionally** — independently of the `strict_completion_validation` flag — so an agent on this runtime could emit a note-less failed verdict that its own prompt endorsed and be rejected with a `422`. The rejection is self-describing and recoverable, so nothing was broken; every such completion simply paid an avoidable round trip.
-
-The prompt now states that on a `"failed"` section verdict `note` is **REQUIRED** and must name the specific violation or gap in at least **20 non-whitespace characters**, carries the anti-placeholder prohibition (no stub, `TODO`, empty string, or bare restatement of the status), and directs that an empty note means the *verdict* is wrong rather than that the note is unnecessary. `note` stays **optional** on `"passed"` and `"not_assessed"`, so the ordinary empty-section case gains no friction.
-
-Producer-side only: the server-side check in `Kanban.Tasks.CompletionValidation.ReviewContract` is unchanged, and no port was accommodated by weakening it.
-
-## [0.4.0] - 2026-08-07
+## [0.4.0] - 2026-08-12
 
 A parity release. `before_task` and `after_task` never fired on GitHub Copilot CLI — the runtime this plugin is named for — and `after_goal` did not either, so the entire hook layer was inert there. This release makes all three work, then builds the workflow features that only matter once they do: a decision matrix, task enrichment, hook-failure triage, step telemetry, and three optional cross-plugin integrations. Four pre-existing defects in the hook executors were found and fixed on the way, three of them in the PowerShell mirror.
 
@@ -29,6 +19,14 @@ A parity release. `before_task` and `after_task` never fired on GitHub Copilot C
 - **The PowerShell executor could not read its stdin at all.** `stride-copilot-lite-hook.ps1` is invoked as `pwsh -File … <phase>` with the payload piped in, and a `-File` script whose `param()` block declares no pipeline-bound parameter cannot bind piped input — PowerShell raised "The input object cannot be bound to any parameters" and the automatic `$input` stayed empty, so every trigger no-opped under every runtime. It now reads `[Console]::In.ReadToEnd()`, which sidesteps parameter binding. This is what the PowerShell harness had been reporting: it went from 3 passed / 7 failed to fully green.
 - **The PowerShell executor never actually ran multi-word hook commands.** It invoked `Start-Process -FilePath bash -ArgumentList '-c', $command`, and `-ArgumentList` re-splits on spaces — so `bash -c "echo hi"` reached bash as `-c echo hi` and ran `echo` with no arguments. Any hook command containing a space did nothing while the executor reported `"status":"success"`, which is worse than failing. Replaced with `ProcessStartInfo.ArgumentList`, which passes each argument verbatim with no shell re-parsing (and, with `UseShellExecute=$false`, is also what lets the child inherit the exported variables above). Only single-word commands such as `false` had been behaving correctly, which is why the exit-code harness cases passed while real hooks silently no-opped.
 - **A failing blocking hook did not stop the workflow under Copilot CLI.** Claude Code blocks a PreToolUse call on `exit 2`, but Copilot CLI ignores exit codes and blocks on a stdout `{"permissionDecision":"deny"}` object, so a failed `before_task` fired and then let the workflow continue. Blocking failures now emit both — the `permissionDecision` / `permissionDecisionReason` keys ride inside the same single-line failure JSON, which consumers that don't know them simply ignore. `after_goal` stays advisory and never emits a deny.
+
+#### Fixed — the failed-verdict `note` rule the server already enforces (D240)
+
+This port's task-reviewer prompt described `note` as optional on every section verdict. The completion API has required it on a `"failed"` verdict since D231, and enforces that **unconditionally** — independently of the `strict_completion_validation` flag — so an agent on this runtime could emit a note-less failed verdict that its own prompt endorsed and be rejected with a `422`. The rejection is self-describing and recoverable, so nothing was broken; every such completion simply paid an avoidable round trip.
+
+The prompt now states that on a `"failed"` section verdict `note` is **REQUIRED** and must name the specific violation or gap in at least **20 non-whitespace characters**, carries the anti-placeholder prohibition (no stub, `TODO`, empty string, or bare restatement of the status), and directs that an empty note means the *verdict* is wrong rather than that the note is unnecessary. `note` stays **optional** on `"passed"` and `"not_assessed"`, so the ordinary empty-section case gains no friction.
+
+Producer-side only: the server-side check in `Kanban.Tasks.CompletionValidation.ReviewContract` is unchanged, and no port was accommodated by weakening it.
 
 ### Added
 
