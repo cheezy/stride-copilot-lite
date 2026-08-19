@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.0] - 2026-08-19
+
+### Fixed — a runaway code fence hid nine headings of the reviewer prompt (D243)
+
+Line 75 opened the Review Report template with a three-backtick fence. The bare three-backtick fence at line 108 therefore *closed* it, and the one at line 109 opened a block that never closed — trapping lines 110–212 as literal code. Nine headings were inside that block, including **D240's Verdict-note rule** and the `consideration_verdicts` documentation: rules the reviewer agent is supposed to act on, rendered to it as an unbroken code listing.
+
+The wrapper at lines 75 and 109 is now four backticks, matching the fix `stride-lite` already carries at its lines 80/115. The nested three-backtick `json` block at 106/108 is unchanged and now nests safely as literal content.
+
+**Fence markers only — no rule text changed.** What changed is whether the rules were legible to the agent reading them.
+
 ## [0.4.0] - 2026-08-12
 
 A parity release. `before_task` and `after_task` never fired on GitHub Copilot CLI — the runtime this plugin is named for — and `after_goal` did not either, so the entire hook layer was inert there. This release makes all three work, then builds the workflow features that only matter once they do: a decision matrix, task enrichment, hook-failure triage, step telemetry, and three optional cross-plugin integrations. Four pre-existing defects in the hook executors were found and fixed on the way, three of them in the PowerShell mirror.
