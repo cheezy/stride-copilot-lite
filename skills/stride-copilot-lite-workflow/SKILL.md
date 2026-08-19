@@ -604,7 +604,7 @@ There is deliberately no `after_doing` or `before_review` — those are the full
 
 Render it like this:
 
-```markdown
+````markdown
 ### Workflow telemetry
 
 | Step | Dispatched | Duration | Reason |
@@ -628,7 +628,7 @@ Render it like this:
   {"name":"reviewer","dispatched":true}
 ]}
 ```
-```
+````
 
 **Final-task detection.** After appending the Completion Summary to `taskK.md`, check the goal directory for `task(K+1).md`:
 
@@ -848,7 +848,7 @@ A two-task goal at `docs/implementation/PENDING/add-notifications/` containing `
 - **Step 7.** Parse the JSON. `approved` → Step 8.
 - **Step 8.** Append `## Completion Summary` to task1.md — synthesis, hook results, review status, and the telemetry block:
 
-```markdown
+````markdown
 ### Workflow telemetry
 
 | Step | Dispatched | Duration | Reason |
@@ -872,7 +872,7 @@ A two-task goal at `docs/implementation/PENDING/add-notifications/` containing `
   {"name":"reviewer","dispatched":true}
 ]}
 ```
-```
+````
 
   Check for task2.md: exists. Return to Step 1.
 
@@ -883,7 +883,7 @@ A two-task goal at `docs/implementation/PENDING/add-notifications/` containing `
 - **Steps 2–7.** Same pattern as iteration 1, minus Step 3a. The reviewer first returns `changes_requested` (the BoardLive subscribe wasn't filtering by `board_id`), so the workflow loops back to Step 4, the fix is made, and Steps 5, 6 and 7 re-run — `after_task` therefore fires **twice** for this task, which is correct: the user's tests must run against the revised code. The second review returns `approved` at review-loop iteration 2, under the cap of 3.
 - **Step 8.** Append `## Completion Summary` to task2.md. Its telemetry records the planner skip with the rule that caused it:
 
-```markdown
+````markdown
 ### Workflow telemetry
 
 | Step | Dispatched | Duration | Reason |
@@ -907,7 +907,7 @@ A two-task goal at `docs/implementation/PENDING/add-notifications/` containing `
   {"name":"reviewer","dispatched":true}
 ]}
 ```
-```
+````
 
   Check for task3.md: does NOT exist. This was the final task.
 

@@ -185,7 +185,7 @@ See [SECURITY.md](SECURITY.md) for the execution model in full.
 
 stride-copilot-lite reads a project-local `.stride_lite.md` config file at the repository root. The file has four canonical sections, each a fenced bash block whose body the harness runs at the corresponding lifecycle point:
 
-```markdown
+````markdown
 ## email
 
 your-email@example.com
@@ -207,7 +207,7 @@ your-email@example.com
 ```bash
 # commands to run when the final task in a goal completes (e.g., `gh pr create`)
 ```
-```
+````
 
 Generate the skeleton by activating `stride-copilot-lite-init` (see Skills below) or copy the example above. The `email` section is informational. The three hook sections are auto-fired by the harness via `hooks/hooks.json`:
 
