@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Added — the decision matrix states its authority and its reading rule (W2113)
+
+`lib/select_workflow_branch.md` is already normative for the six-column table in the workflow skill, and the skill says so. What neither file said is that the helper's table is the *only* thing that gates a dispatch. It says so now, under the matrix: the quick reference card, the README, an agent prompt and a task file's own text may restate an outcome and may not originate one, because two independently reachable routes to one dispatch leave the recorded skip reason unable to say which route fired.
+
+Beside it, a statement of what the reading rule rests on. It leads with the precondition: a missing or unrecognizable `## Key files` heading resolves to `full` before any row is consulted, and the Key files column has no cell for that state, so going straight to the table would match on complexity alone and reach `skip-all`. For what survives that gate — coverage, so no complexity value runs off the bottom; disjointness, so no task matches two rows and the scan order arbitrates nothing; and the two rows whose position is still load-bearing, the `small` pair that has to read as a threshold in one direction and the fallback that has to stay at the foot. The Claude Code plugin's row precedence is deliberately not copied across: it orders a decompose row and a defect row, and this port has taken neither.
+
+Documentation only — no row changed, and the reference implementation is untouched.
+
+### Added — a closed `reason_code` vocabulary for skipped telemetry entries (W2113)
+
+A `workflow_steps` entry that was not dispatched may now carry a six-value `reason_code` beside its prose `reason` — alongside it, never instead of it, since the prose is what a human reads and the code is what can be counted. The vocabulary is closed at `decision_matrix_skip`, `ran_inline`, `hook_body_empty`, `subsumed_by_task_spec`, `folded_into_prior_step` and `matrix_deviation`, with a note on which of this loop's skips map onto which code and which one — the enricher finding nothing sparse — deliberately maps onto none of them and stays prose-only.
+
+`matrix_deviation` is the value that carries the weight: it records a step the matrix called for that did not run, which is the case most easily mislabelled as an ordinary matrix skip. The key stays optional and the rendered examples continue to omit it, so nothing already written becomes non-conforming.
+
+### Added — canon anchor on the reviewer's failed-verdict rule (W2113)
+
+The reviewer prompt at `agents/task-reviewer.agent.md` already stated the failed-verdict `note` requirement in full; it now carries the canon marker next to it, so the drift check can see that. Nothing about the rule itself moved.
+
 ## [0.5.0] - 2026-08-19
 
 ### Fixed — a runaway code fence hid nine headings of the reviewer prompt (D243)

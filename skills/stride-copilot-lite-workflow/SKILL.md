@@ -596,6 +596,22 @@ There is deliberately no `after_doing` or `before_review` — those are the full
 
 **A reason names the condition, never the outcome.** `"explorer was skipped"` restates the `dispatched: false` beside it and tells a reader nothing. `"Decision matrix: small complexity, 1 key file → skip-all row"` names the rule that fired, which is what makes the record auditable after the fact. The common reasons are the matrix rows, the enrichment gate finding nothing sparse, and — for `before_task` / `after_task` — the matrix having skipped the boundary write that fires them.
 
+<!-- canon:reason-code-vocabulary v1 -->
+**A skipped entry may also carry a machine-readable `reason_code`.** It sits beside `reason`, never in place of it: the prose is for the person reading the summary, the code is what a dashboard can count. Leaving the key off is always allowed. Supplying one that is not in this list is not — though nothing here will stop you: this plugin makes no network calls and the block is rendered to a Completion Summary on disk, so the set is closed by convention rather than by a server rejecting it. Convention is the whole enforcement, which is why a code outside the six is a defect in the record rather than an error you will be told about.
+
+| Code | Use when |
+|---|---|
+| `decision_matrix_skip` | The row this task resolved to skips the step |
+| `ran_inline` | The work happened, in the main loop, with nothing dispatched to do it |
+| `hook_body_empty` | The hook body in the port's hook-configuration file holds no commands, so firing it executes nothing |
+| `subsumed_by_task_spec` | The task file settles this on its own; the step had nothing left to determine |
+| `folded_into_prior_step` | An earlier step's output already covers this one |
+| `matrix_deviation` | The row called for the step and it was skipped anyway |
+
+Five of those describe compliance. `matrix_deviation` is the one that records a departure, and that is exactly why it is in the list: it is the honest label for the case people are most tempted to file as `decision_matrix_skip` — a step the table asked for and that did not run. Reporting it under its own code is what keeps the other five worth aggregating.
+
+Applied to this loop the mapping is narrow. `explorer`, `planner` and `reviewer` skipped by a matrix row take `decision_matrix_skip`. `before_task` and `after_task` skipped because the boundary write they intercept never happened take the same code — the matrix is still the cause, one step removed. `enricher` skipped because nothing was sparse is not a matrix outcome and this list has no code for it: omit the key and let the prose reason carry it, rather than reaching for the nearest code. The rendered examples below carry no `reason_code` anywhere, which stays valid.
+
 **Record a duration only where one was measured.** The hook executor emits `duration_seconds` in its success JSON, so `before_task` and `after_task` have a real figure to record. Subagent dispatches usually do not, and a dispatched step with no available duration is recorded as dispatched **with the duration omitted** — never with an invented one. A fabricated number is worse than an absent one, because it looks like data.
 
 **Render both a table and a fenced JSON block.** The table is what a human reads; the JSON is what tooling parses. This mirrors `task-reviewer`, which already emits a prose summary line alongside a fenced ```json block for exactly this reason. The table is the primary carrier — the summary is read by people first, and the JSON must never be the only place a fact appears.

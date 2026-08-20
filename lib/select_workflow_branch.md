@@ -38,6 +38,19 @@ Read top to bottom; take the first row that matches.
 | `large` | any | `full` |
 | absent or unrecognized | any | `full` |
 
+<!-- canon:decision-matrix-authority v1 -->
+**One gate per step, and the gate is in this file.** The workflow skill's six-column rendering already concedes that this file settles any disagreement between the two. The same concession is owed by every other surface that mentions exploring, planning or reviewing — the quick reference card, `README.md`, an agent prompt, a task file's own text. Each may restate an outcome. None may originate one. A second, independently satisfiable condition for the same dispatch is not a safety net: it is a second decision point, and once two exist the skip reason written into the Completion Summary no longer says which one fired, so the telemetry stops being evidence of anything. That is the shape of D221 and D232, and it is reintroduced not by a bad edit but by a helpful sentence added somewhere else in the tree — which is why the rule is stated here, at the table, rather than next to the prose it constrains.
+
+<!-- canon:row-precedence v1 -->
+**Three properties hold of this table, and the reading rule leans on all three.**
+
+- **A precondition, settled before the table.** A task whose `## Key files` heading is missing or unrecognizable resolves to `full` without consulting a row at all — the Input rules below say so and the Invariants restate it. The Key files column has no cell for that state, so a reader who skips to the table matches the first row on complexity and lands on `skip-all`, which is the one outcome that ships an unreviewed diff. The three properties below hold of the inputs that get past that gate.
+- **Coverage.** Every complexity value lands on a row. `small`, `medium` and `large` are named; anything else — absent, misspelled, or borrowed from some other tool's scale — is caught by the final row. No surviving input runs off the bottom with nothing to return.
+- **Disjointness.** No two rows accept the same pair of signals. The `small` rows are separated by a count threshold that has neither a gap nor an overlap at one file, `medium` and `large` each stand on their own, and the last row is reached precisely when the other four are not. So for an input that reached the table, "the first row that matches" and "the row that matches" pick out the same row: the scan order settles nothing, because there is nothing left to settle.
+- **Position, for exactly two rows.** The `small` pair must keep its printed sequence so the threshold reads one way — at most one file, then two or more — since inverting them sends a single-file task down `explore-review`. And the fallback belongs at the foot because it answers a question none of the others asked: whether the complexity was legible in the first place. Promoted, it would begin answering for values that are.
+
+Disjointness is a property of *this* table, not of decision matrices in general. The Claude Code plugin's matrix carries rows that genuinely overlap — a defect row crossing the complexity rows — and it therefore has to publish a precedence ranking. This port reaches the same three tokens without one because it never took those rows. A row added here that can overlap another ends the property above, and the ranking would have to be written in the same change that adds it.
+
 **The unrecognized row is full dispatch, not skip.** An unreadable signal is not evidence of a small task — it is absence of evidence. Falling back to `full` costs two dispatches on a task that may not have needed them; falling back to `skip-all` ships an unreviewed diff. Only one of those is recoverable.
 
 **`large` is included although `create-decomposer` never emits it.** Its output is capped at ~1–3 hour tasks by design, so it produces only `small` and `medium`. A hand-written or hand-edited task file can carry `large`, and omitting the row would make a plainly meaningful value fall through to "unrecognized".
