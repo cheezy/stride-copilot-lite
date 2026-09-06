@@ -1125,6 +1125,10 @@ g417_has "an absent or empty issues array is never all-cosmetic" "$WF" \
   "is **never** an all-cosmetic round"
 g417_has "the prose fallback makes the rule inapplicable, not satisfied" "$WF" \
   "**inapplicable, not satisfied**"
+# The rendered issue bullet carries no `category`, so on the prose path the
+# security carve-out has nothing to select on and recording is withheld.
+g417_has "the record disposition is withheld where category cannot be read" "$WF" \
+  "record disposition is unavailable on that path too"
 # The all-cosmetic branch fires BEFORE the increment, so it never reaches the
 # ceiling carve-outs. Both guards it therefore needs of its own are pinned here.
 g417_has "the all-cosmetic branch requires no standing escalation" "$WF" \

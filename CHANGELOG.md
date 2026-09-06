@@ -82,6 +82,14 @@ The quick-reference card's exit list still named "the review-iteration cap" as a
 
 The third sub-decision recorded as cannot-apply was missing: the reference implementation persists the round count in a file, and this port has nowhere to put one — it writes no state outside the goal directory, and its `## Review Report` is replace-in-place, so round one's report cannot serve as the tally either. That is now recorded with its structural reason rather than left to read as an oversight, and `dispatch_count` on the `reviewer` entry is named as what stands in for the lost audit trail.
 
+### Fixed — the ceiling could not evaluate its own security carve-out on the prose-fallback path (W2172)
+
+The reviewer's rendered `### Issues` bullet carries severity, `file:line` and a description — **no `category`**, which lives only in the fenced JSON block. So on a report resolved by the prose fallback, the ceiling's "a security finding is never merely recorded" carve-out had nothing to select on, and the record bullet's own instruction to list each finding by `severity`, `category` and `file:line` could not be complied with. The release scoped only the all-cosmetic branch out of that path and said nothing about the record disposition, so the natural reading left it applying — which made the guarantee that a `critical` or a security finding never reaches a Completion Summary unbacked on exactly the path with the least information.
+
+Reaching the ceiling with a prose-only report now takes the stop path. Recording is available only where the fields the carve-outs turn on are actually present.
+
+Found by an exploratory session against `stride-opencode-lite` and fixed in all three lite ports before any was released, since all three shipped the same rendering template and the same scoping sentence.
+
 ### Fixed — two assertion needles never ran, and the suite stayed green (W2171)
 
 Found by review after the second round, in an edit made to *repair* two earlier needles. Both replacements left their single quote unterminated, so each needle string ran on to the next apostrophe several lines later. The consequence was worse than a dead assertion: the swallowed lines contained two further `g417_has` calls that therefore never executed, the surviving needle degraded into a multi-line disjunction that matched any one of its lines, and the unquoted remainder executed two backtick spans as shell commands — the suite printed `command not found` to stderr and still exited 0. The redaction clause at the Step 8 write site, which is the one that produces committed content, had no binding pin at all.
