@@ -1032,7 +1032,7 @@ else
 fi
 
 # --- Both renderings are required, with the table primary ---
-if grep -q '| Step | Dispatched | Duration | Reason |' "$WF" && grep -q '{"workflow_steps":\[' "$WF"; then
+if grep -qF '| Step | Dispatched | Dispatches | Duration | Reason |' "$WF" && grep -q '{"workflow_steps":\[' "$WF"; then
   ok "telemetry renders as both a table and a fenced JSON block"
 else
   nope "telemetry rendering" "a table and a JSON block" "one is missing"
@@ -1045,6 +1045,213 @@ if grep -q 'No command output, no environment values, no paths outside the proje
 else
   nope "telemetry redaction rule" "an explicit no-output/no-env rule" "not found"
 fi
+
+# ------------------------------------------------------------------
+# G417 review-convergence rules ported to this port (W2171)
+# ------------------------------------------------------------------
+# All three rules land as prose here -- this plugin makes no network call,
+# so there is no submission step and no validator. These assertions are
+# therefore the only mechanical bound the repository has on them. Each one
+# needles the CLAUSE ITSELF, never neighbouring text: an assertion that stays
+# green when its clause is deleted reads as coverage while providing none.
+# Every assertion below was mutation-tested by a harness that deletes each
+# needle's clause in turn against a byte-verified copy and requires that named
+# assertion to go red. Every g417_has needle in this block currently binds --
+# count them from the file rather than trusting a number written here, since a
+# stale count is how the previous audit claim went wrong. Four did not bind on
+# the first pass, and a later edit left two needles unterminated so they never
+# ran at all while the suite stayed green:
+# three needled a neighbouring sentence rather than their clause, and one
+# matched at two sites so deleting either left it green. Re-run the harness
+# after editing any pinned clause -- and note a presence check pins against
+# DELETION only; it cannot catch a contradiction added elsewhere in the file.
+# grep -qF throughout: these needles carry [], (), * and backticks, which a
+# basic regex would silently mis-match.
+
+WF="$REPO_ROOT/skills/stride-copilot-lite-workflow/SKILL.md"
+G417_TR="$REPO_ROOT/agents/task-reviewer.agent.md"
+
+g417_has() { # label, file, needle
+  if grep -qF "$3" "$2"; then ok "$1"; else nope "$1" "$3" "not found"; fi
+}
+
+# --- The ceiling ---------------------------------------------------
+g417_has "the review ceiling is two rounds" "$WF" \
+  "Two review rounds is the ceiling"
+g417_has "the clamp is performed by a step, not just described" "$WF" \
+  "Apply the clamp first"
+g417_has "the clamp names the min it applies" "$WF" \
+  "min(max_review_iterations, 2)"
+assert_eq "the ceiling carries its canon anchor exactly once" \
+  "$(grep -c 'canon:review-round-cap v1' "$WF")" "1"
+
+# --- The four-way ceiling disposition ------------------------------
+g417_has "the ceiling records important and minor findings" "$WF" \
+  "are recorded, not fixed"
+# The critical carve-out MUST stay bounded. An unbounded "one further round"
+# re-applies to its own post-state and hands back the ceiling the clamp exists
+# to guarantee -- pin the non-renewal clause, not the "one further round" words.
+g417_has "the critical carve-out is spent once and does not renew" "$WF" \
+  "The exemption is spent once for the whole task and does not renew"
+g417_has "a security finding is never merely recorded at any severity" "$WF" \
+  'is never merely recorded, at any severity'
+g417_has "the ceiling judges a security finding by subject, not only by its label" "$WF" \
+  "Judge by subject rather than by label as well"
+g417_has "an outstanding escalation takes the stop path" "$WF" \
+  "is never recorded-and-completed"
+# The port's standing prohibition must survive this change verbatim.
+g417_has "the no-second-cap prohibition survives verbatim" "$WF" \
+  "no second loop and no second cap"
+
+# --- The all-cosmetic branch ---------------------------------------
+# This branch fires BEFORE the increment, so it never reaches the carve-outs
+# above. Its own severity/category re-check is the only thing between a
+# mis-flagged entry and a completed task.
+g417_has "the all-cosmetic branch fires before the increment" "$WF" \
+  "fires **before the increment**"
+g417_has "the all-cosmetic branch re-reads severity and category" "$WF" \
+  "Re-read \`severity\` and \`category\` here rather than trusting the flag"
+g417_has "the all-cosmetic condition names the minor/non-security conjunct" "$WF" \
+  'is a `minor` whose `category` is not `"security"`'
+# Mutation-tested: needling only "voids the branch outright" left this green
+# when the security half of the condition was deleted. Needle both halves.
+g417_has "a non-minor entry voids the branch" "$WF" \
+  'whose `severity` is anything other than `minor`'
+g417_has "a security-category entry voids the branch" "$WF" \
+  'or whose `category` is `"security"`, voids the branch'
+g417_has "a non-boolean cosmetic is not coerced by the consumer" "$WF" \
+  "is not coerced here either"
+g417_has "an absent or empty issues array is never all-cosmetic" "$WF" \
+  "is **never** an all-cosmetic round"
+g417_has "the prose fallback makes the rule inapplicable, not satisfied" "$WF" \
+  "**inapplicable, not satisfied**"
+# The all-cosmetic branch fires BEFORE the increment, so it never reaches the
+# ceiling carve-outs. Both guards it therefore needs of its own are pinned here.
+g417_has "the all-cosmetic branch requires no standing escalation" "$WF" \
+  "**and no escalation is standing**"
+g417_has "a standing escalation voids the all-cosmetic branch" "$WF" \
+  "**voids this branch outright**"
+g417_has "the all-cosmetic branch judges security by subject, not only by label" "$WF" \
+  "Judge by subject as well as by label"
+g417_has "reaching Step 8 is stated as a conjunction" "$WF" \
+  "Reaching Step 8 is a conjunction"
+# The prose fallback must test refusal first and anchor the affirmative --
+# a bare substring test for "Approved" also matches "Not Approved".
+g417_has "the prose fallback tests for refusal first" "$WF" \
+  "Test for refusal first, and match the affirmative only at the start of the line"
+g417_has "the prose fallback requires an empty Issues subsection" "$WF" \
+  'subsection is empty or renders `- (none)`'
+# A non-conforming approval must consume a round like any other refusal;
+# a path that loops without incrementing is unbounded by the ceiling.
+g417_has "a non-conforming approval increments and is bounded by the ceiling" "$WF" \
+  "route into the \`changes_requested\` branch below"
+# The absent round-count file is a recorded cannot-apply, not an omission.
+g417_has "the absent round-count file is recorded with its structural reason" "$WF" \
+  "No durable round-count file, and that cannot apply here"
+
+# --- The approved path and Step 8 ----------------------------------
+g417_has "the workflow refuses an approval that carries findings" "$WF" \
+  "first confirm the report is conforming"
+g417_has "an unrecognized status is never read as an approval" "$WF" \
+  "Never read an unrecognized status as an approval"
+g417_has "Step 8 has a shape for a completed non-approval" "$WF" \
+  "Review ran, did not approve"
+g417_has "Step 8 forbids writing approved for a refusal" "$WF" \
+  'Never write "approved" for a review that refused'
+g417_has "Step 8 records findings left unfixed" "$WF" \
+  "Any finding recorded rather than fixed"
+# Both recorded-finding write sites are committed markdown; both must carry
+# the redaction clause. Pinned per-site: a whole-file count passes silently
+# when one site loses the clause and an unrelated one gains it.
+g417_has "the Step 7 recorded-findings rule carries the redaction clause" "$WF" \
+  "never pasted. **Never copy a credential"
+g417_has "the Step 7 recorded-findings rule names the redaction substitute" "$WF" \
+  'and identify it by its `file:line`. The task completes'
+g417_has "the Step 8 recorded-findings bullet carries the redaction clause" "$WF" \
+  "restated in your own words. **Never copy a credential"
+g417_has "the Step 8 recorded-findings bullet names the redaction substitute" "$WF" \
+  'and identify it by its `file:line`. Omit this bullet only when'
+
+# --- dispatch_count telemetry --------------------------------------
+g417_has "dispatch_count is documented in the telemetry writing rules" "$WF" \
+  "Record how many times a subagent was dispatched"
+assert_eq "dispatch_count carries its canon anchor exactly once" \
+  "$(grep -c 'canon:dispatch-count-telemetry v1' "$WF")" "1"
+g417_has "dispatch_count counts dispatches, not rounds" "$WF" \
+  "It counts dispatches, not rounds"
+g417_has "dispatch_count is not review_iteration" "$WF" \
+  'is **not** `review_iteration`'
+g417_has "dispatch_count is meaningful on only three step names" "$WF" \
+  "Only three names can carry it meaningfully"
+g417_has "dispatch_count must not be divided into a duration" "$WF" \
+  "is not a per-dispatch figure"
+g417_has "dispatch_count is not a token count" "$WF" \
+  "It is not a token count"
+
+# --- The reviewer contract -----------------------------------------
+g417_has "the cosmetic flag is defined in the reviewer contract" "$G417_TR" \
+  "a disposition, not a fourth severity"
+# The task's own security consideration, made mechanical: without this pin an
+# edit could delete the exclusion, keep the flag, and leave the suite green --
+# which that consideration calls worse than not porting the class at all.
+g417_has "the cosmetic flag excludes the security category at any severity" "$G417_TR" \
+  'A `cosmetic: true` beside `category: "security"`, at any severity'
+# Mutation-tested: needling only the closing rationale sentence left this green
+# when the above-minor refusal clause itself was deleted. Needle the clause.
+g417_has "the cosmetic flag is refused above minor" "$G417_TR" \
+  'beside any severity other than `minor`'
+g417_has "the cosmetic refusal rationale is stated" "$G417_TR" \
+  "A security finding is never presentation, and nothing above"
+g417_has "the cosmetic flag refuses non-boolean values" "$G417_TR" \
+  "are not coerced"
+g417_has "the cosmetic flag never removes the finding" "$G417_TR" \
+  "The flag never removes the finding"
+assert_eq "the cosmetic definition carries its canon anchor exactly once" \
+  "$(grep -c 'canon:cosmetic-finding-class v1' "$G417_TR")" "1"
+g417_has "the top-level verdict vocabulary is documented locally" "$G417_TR" \
+  "It has exactly two values"
+g417_has "the top-level status is kept distinct from the section status" "$G417_TR" \
+  "None of those six is ever legal at the top level"
+g417_has "approved requires an empty issues array, minor included" "$G417_TR" \
+  '`issues[]` is **empty** — every severity, `minor` included'
+assert_eq "the reviewer cites a schema version that carries cosmetic" \
+  "$(grep -oE 'schema_version .[0-9]+\.[0-9]+.' "$G417_TR" | sort -u | grep -c '1\.7')" "1"
+assert_eq "no stale 1.1 schema citation survives" \
+  "$(grep -c 'schema_version [^0-9]*1\.1' "$G417_TR")" "0"
+
+# --- Negative pins: no key added to a schema this port does not have
+# issue_counts has no consumer here and no G417 rule requires it. review_round
+# would need a dispatch parameter, which this port's black-box contract forbids.
+assert_eq "no issue_counts key was invented in the reviewer contract" \
+  "$(grep -c 'issue_counts' "$G417_TR")" "0"
+assert_eq "no review_round parameter was invented" \
+  "$(cat "$WF" "$G417_TR" | grep -c 'review_round')" "0"
+
+# --- The block's own needles must be well-formed ------------------
+# A needle whose quote is never closed swallows the following lines: those
+# assertions silently never run, the suite stays green, and the unquoted
+# remainder can execute backticks as commands. That happened here once, to
+# two of the redaction pins. Checked mechanically rather than by eye.
+G417_BAD_QUOTE=0
+while IFS= read -r _line; do
+  case "$_line" in
+    *"g417_has "*) continue ;;
+  esac
+  # a needle line: leading spaces then a quote; it must close on the same line
+  case "$_line" in
+    "  '"*) case "$_line" in *"'") ;; *) G417_BAD_QUOTE=$((G417_BAD_QUOTE+1)) ;; esac ;;
+    '  "'*) case "$_line" in *'"') ;; *) G417_BAD_QUOTE=$((G417_BAD_QUOTE+1)) ;; esac ;;
+  esac
+done < <(awk '/# G417 review-convergence rules ported/,/# Gated exploratory-testing and harden/' "$0")
+assert_eq "every G417 needle closes its quote on its own line" "$G417_BAD_QUOTE" "0"
+
+# --- Staleness: the old cap number is gone from every live surface --
+assert_eq "no stale cap-of-3 survives in the workflow skill" \
+  "$(grep -cE 'default 3|cap of 3|3 iterations|3-iteration|cap: 3' "$WF")" "0"
+# The literal-3 pin above missed a stale summary that named the old terminus
+# without naming the number ("the review-iteration cap"). Pin the phrase too.
+assert_eq "no stale unconditional review-iteration-cap exit survives" \
+  "$(grep -c 'the review-iteration cap' "$WF")" "0"
 
 # ------------------------------------------------------------------
 # Gated exploratory-testing and harden integration (W2028)

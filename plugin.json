@@ -1,7 +1,7 @@
 {
   "name": "stride-copilot-lite",
   "description": "Lightweight companion plugin to Stride kanban \u2014 produces Stride-shaped goal and task markdown documents on disk from a free-text prompt plus an optional requirements directory. No API calls, no kanban setup, no auth files.",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "author": {
     "name": "Jeff Morgan",
     "email": "cheezy@letstango.ca"

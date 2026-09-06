@@ -63,7 +63,8 @@ Everything this plugin writes is intended to be committed, so several contracts 
 - The **task-enricher** explores your codebase to fill sparse sections and is forbidden from copying an API key, token, password, connection string, `.env` content, a secret-shaped assignment, an internal hostname, a private IP or fixture personal data into any section it writes. It references such a file by path and purpose only.
 - The **hook-diagnostician** receives the failing command's stdout and stderr tails, which can contain environment values and occasionally secrets. It never echoes those tails verbatim into its plan.
 - **Security-review evidence** is a `file:line` reference and a short note, never quoted material from the diff.
-- **Workflow telemetry** carries step names, durations and skip reasons only — no command output, no environment values, no paths outside the project.
+- **Workflow telemetry** carries step names, durations, dispatch counts and skip reasons only — no command output, no environment values, no paths outside the project. A dispatch count is a bare integer and carries nothing else.
+- **Findings recorded rather than fixed** at the review ceiling reach a committed Completion Summary. They are restated in the workflow's own words and identified by `severity`, `category` and `file:line` — never pasted from the review, and never carrying a credential, token, internal hostname or path outside the project, which is replaced by `[REDACTED — text embedded a credential]`.
 - **Exploratory findings** are restated in the workflow's own words before entering a Completion Summary.
 
 ## Untrusted input

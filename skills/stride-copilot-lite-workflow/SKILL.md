@@ -1,7 +1,7 @@
 ---
 name: stride-copilot-lite-workflow
 description: |
-  Activate ONLY when the user explicitly states intent to work on a stride-copilot-lite goal (e.g., "work this goal", "drive the X goal to completion", "process all tasks in <path>", "resume the X goal") AND supplies a path to a goal directory (either inline in the same turn, or as a follow-up answer to a clarifying question from the agent). Without BOTH the intent statement AND the path, do not activate — the user might want one-off work on a single task, manual inspection, or some other unrelated operation. Once activated, the skill drives the goal through its full eight-step lifecycle for every taskN.md in numeric order: select the next incomplete task → `## before_task` hook (auto-fired by hooks/hooks.json pre-explorer-dispatch) → dispatch `stride-copilot-lite:task-explorer` to enrich the task with codebase context → implement the code changes per the task's acceptance criteria → `## after_task` hook (auto-fired pre-reviewer-dispatch) → dispatch `stride-copilot-lite:task-reviewer` to validate the diff → if review approved proceed, else loop back to coding (cap: 3 iterations) → write a `## Completion Summary` to the task file → advance to the next taskN.md. The skill exits cleanly ONLY after the final task's Completion Summary is written, `goal.md` has its Completion Summary appended, and the `## after_goal` hook has auto-fired (PostToolUse on the goal.md Edit/Write). Do not re-enter the loop after exit; subsequent goals require a fresh activation with a new path. The skill is the file-based equivalent of the full Stride plugin's `stride-workflow` orchestrator: no API calls, no claim/complete server endpoints, no kanban authentication — only goal/task markdown files, the project-local `.stride_lite.md` hook file, and the two existing stride-lite subagents. Examples: <example>Context: User has run the stride-copilot-lite-create-goal skill and now wants to drive the resulting goal through implementation. user: "Work the docs/implementation/PENDING/add-real-time-notifications-for-board-comments goal." assistant: "Activating stride-copilot-lite-workflow with that path as goal_directory_path; the skill will iterate task1.md, task2.md, task3.md in order until every task and goal.md has a Completion Summary, then exit." <commentary>Both conditions are met in a single turn: explicit intent ("Work the X goal") + path supplied inline. The skill iterates every taskN.md and exits only after Step 8's final-task branch runs.</commentary></example> <example>Context: User states intent without a path. user: "Let's work on a stride-copilot-lite goal." assistant: "Which goal directory? Please give me the path (e.g., docs/implementation/PENDING/add-notifications/)." <commentary>Intent without a path — do NOT activate yet. Ask for the path; activate only when the user supplies it.</commentary></example> <example>Context: User wants to resume a partially-completed goal where task1.md is already done. user: "Resume the add-notifications goal at docs/implementation/PENDING/add-notifications/" assistant: "Activating stride-copilot-lite-workflow. The first task already has a ## Completion Summary section, so the skill will pick up at task2.md and continue until every remaining task and goal.md is wrapped up, then exit." <commentary>The 'next task' rule is 'first taskN.md without ## Completion Summary' — partial-run resumption works automatically. Exit still happens only after the final-task branch fires.</commentary></example> <example>Context: User asks for a single task. user: "Implement task3.md in the add-notifications goal." assistant: "That's a single-task request — I'll do it manually rather than activating stride-copilot-lite-workflow, which is for full-goal drives. Want me to use the workflow on the full goal instead?" <commentary>Single-task requests do NOT match the activation contract (the workflow always iterates the full remaining set and runs the goal close-out). Do the work manually or confirm a full-goal drive.</commentary></example>
+  Activate ONLY when the user explicitly states intent to work on a stride-copilot-lite goal (e.g., "work this goal", "drive the X goal to completion", "process all tasks in <path>", "resume the X goal") AND supplies a path to a goal directory (either inline in the same turn, or as a follow-up answer to a clarifying question from the agent). Without BOTH the intent statement AND the path, do not activate — the user might want one-off work on a single task, manual inspection, or some other unrelated operation. Once activated, the skill drives the goal through its full eight-step lifecycle for every taskN.md in numeric order: select the next incomplete task → `## before_task` hook (auto-fired by hooks/hooks.json pre-explorer-dispatch) → dispatch `stride-copilot-lite:task-explorer` to enrich the task with codebase context → implement the code changes per the task's acceptance criteria → `## after_task` hook (auto-fired pre-reviewer-dispatch) → dispatch `stride-copilot-lite:task-reviewer` to validate the diff → if review approved proceed, else loop back to coding (ceiling: two rounds, clamped) → write a `## Completion Summary` to the task file → advance to the next taskN.md. The skill exits cleanly ONLY after the final task's Completion Summary is written, `goal.md` has its Completion Summary appended, and the `## after_goal` hook has auto-fired (PostToolUse on the goal.md Edit/Write). Do not re-enter the loop after exit; subsequent goals require a fresh activation with a new path. The skill is the file-based equivalent of the full Stride plugin's `stride-workflow` orchestrator: no API calls, no claim/complete server endpoints, no kanban authentication — only goal/task markdown files, the project-local `.stride_lite.md` hook file, and the two existing stride-lite subagents. Examples: <example>Context: User has run the stride-copilot-lite-create-goal skill and now wants to drive the resulting goal through implementation. user: "Work the docs/implementation/PENDING/add-real-time-notifications-for-board-comments goal." assistant: "Activating stride-copilot-lite-workflow with that path as goal_directory_path; the skill will iterate task1.md, task2.md, task3.md in order until every task and goal.md has a Completion Summary, then exit." <commentary>Both conditions are met in a single turn: explicit intent ("Work the X goal") + path supplied inline. The skill iterates every taskN.md and exits only after Step 8's final-task branch runs.</commentary></example> <example>Context: User states intent without a path. user: "Let's work on a stride-copilot-lite goal." assistant: "Which goal directory? Please give me the path (e.g., docs/implementation/PENDING/add-notifications/)." <commentary>Intent without a path — do NOT activate yet. Ask for the path; activate only when the user supplies it.</commentary></example> <example>Context: User wants to resume a partially-completed goal where task1.md is already done. user: "Resume the add-notifications goal at docs/implementation/PENDING/add-notifications/" assistant: "Activating stride-copilot-lite-workflow. The first task already has a ## Completion Summary section, so the skill will pick up at task2.md and continue until every remaining task and goal.md is wrapped up, then exit." <commentary>The 'next task' rule is 'first taskN.md without ## Completion Summary' — partial-run resumption works automatically. Exit still happens only after the final-task branch fires.</commentary></example> <example>Context: User asks for a single task. user: "Implement task3.md in the add-notifications goal." assistant: "That's a single-task request — I'll do it manually rather than activating stride-copilot-lite-workflow, which is for full-goal drives. Want me to use the workflow on the full goal instead?" <commentary>Single-task requests do NOT match the activation contract (the workflow always iterates the full remaining set and runs the goal close-out). Do the work manually or confirm a full-goal drive.</commentary></example>
 skills_version: "1.0"
 ---
 
@@ -44,7 +44,7 @@ After exit, do **not** re-enter the loop, do **not** start another goal, do **no
 | Input | Type | Required | Default | Notes |
 |---|---|---|---|---|
 | `goal_directory_path` | string | yes | — | Path to a stride-lite goal directory (e.g., `docs/implementation/PENDING/<slug>/`). The directory must contain `goal.md` plus `task1.md`, `task2.md`, ... in sequential numeric order. |
-| `max_review_iterations` | integer | no | `3` | Cap on the Step 7 review-loop. After this many consecutive `changes_requested` reviews, the skill surfaces the failing review and stops without writing the Completion Summary. |
+| `max_review_iterations` | integer | no | `2` | Ceiling on the Step 7 review-loop. Two is the maximum: a larger value is clamped rather than honoured, because a ceiling the caller can raise is not what makes the loop terminate by construction. `1` is honoured — lowering is always safe. What happens on reaching it is Step 7's disposition, which is no longer a single unconditional stop. |
 
 ## What this skill does NOT do
 
@@ -537,20 +537,54 @@ The verdicts live in two places the workflow already owns: **Step 7's decision**
 
 Read the active task file's `## Review Report` section. Extract the first fenced ```json block from that section and parse it. Read the `status` field:
 
-- If `status == "approved"` → proceed to Step 8.
-- If `status == "changes_requested"` → increment the `review_iteration` counter (initialized to 0 at Step 2) and:
-  - If `review_iteration < max_review_iterations` (default 3) → loop back to **Step 4** (Implementation). Make further code changes addressing the reviewer's issues. Then re-run Steps 5, 6, 7 in sequence.
-  - If `review_iteration >= max_review_iterations` → clear the activation marker and stop the workflow. Surface the failing review's prose summary line + the list of unresolved issues to the user. Do NOT write a Completion Summary; the task remains incomplete.
+<!-- canon:review-round-cap v1 -->
+
+**Two review rounds is the ceiling, and reaching it no longer means one unconditional stop.** A round is a reviewer dispatch that left a `## Review Report` this step could read. A dispatch that errored, or returned without writing the section at all, is **re-dispatched once and costs no round** — a crash is not a finding. A second consecutive failure is a dispatch error and stops the drive, as it always has. A **prose-only** report is not an unreadable one: the fallback below yields a decision from it, so it consumes a round like any other.
+
+**Apply the clamp first — this is a step, not a description.** Before any comparison below, set `max_review_iterations` to `min(max_review_iterations, 2)`, treating an absent, non-integer or below-1 value as `2`. The inputs table describes this ceiling; this sentence performs it, and without a performing step a caller could raise the bound that is supposed to make the loop terminate. `review_iteration` starts at `0` on first entry here for the active task and is never carried across tasks.
+
+**No durable round-count file, and that cannot apply here rather than being unimplemented.** The reference implementation persists the count in a file so the cap survives a lost session. This port has nowhere to put one: it makes no network call, writes no state outside the goal directory, and the `## Review Report` it does write is **replace-in-place**, so round one's report is overwritten by round two's and cannot serve as the tally either. The counter is therefore in-drive working state for the length of one task, and a session that dies mid-loop restarts the count. What stands in for the audit trail is the `dispatch_count` on the `reviewer` telemetry entry, which records what the loop actually cost after the report itself has been overwritten.
+
+**Round two is a full re-review, not a scoped verification.** This port dispatches both subagents as black boxes by task-file path and passes no other parameters, so there is no channel to tell the reviewer which round it is. That costs the token saving a scoped round would buy; it does not weaken the round, because the reviewer still reads the whole diff and renders every subsection. The ceiling scopes the mission, never the evidence — here, by construction.
+
+- If `status == "approved"` → **first confirm the report is conforming: `issues[]` must be empty.** The reviewer defines `approved` as an empty `issues[]`, `minor` included, so an approval carrying findings is a contract violation. If `issues[]` is non-empty, **route into the `changes_requested` branch below** — increment `review_iteration` and loop, exactly as an ordinary refusal does. It consumes a round and is bounded by the ceiling like any other; a path that looped without incrementing would be the one place this loop does not terminate by construction, which would defeat the clamp above. Without this check a `minor` marked `category: "security"` could ride an approval into Step 8, where none of the carve-outs below runs. Only when `issues[]` is empty → proceed to Step 8.
+- If `status` is neither `"approved"` nor `"changes_requested"` → treat it as `changes_requested`, on the same conservative reasoning the JSON parse fallback below uses, and name the value actually received in the Completion Summary. Never read an unrecognized status as an approval.
+- If `status == "changes_requested"` → increment the `review_iteration` counter and:
+  - If `review_iteration < max_review_iterations` → loop back to **Step 4** (Implementation). Make further code changes addressing the reviewer's issues. Then re-run Steps 5, 6, 7 in sequence.
+  - If `review_iteration >= max_review_iterations` → the ceiling is reached. Take the disposition below rather than stopping unconditionally.
+
+**What happens at the ceiling depends on what is still outstanding.**
+
+- **Remaining `important` and `minor` findings are recorded, not fixed.** Write the Completion Summary and list each one by `severity`, `category` and `file:line`, restated in one line of your own words — never pasted. **Never copy a credential, token, internal hostname or path outside the project out of a finding**; substitute `[REDACTED — text embedded a credential]` and identify it by its `file:line`. The task completes. An unfixed finding written where the next reader will find it beats a third pass that turns up a fourth thing. **This is the only terminus that changed.**
+- **A `critical` that still stands is exempt from the ceiling and always blocks — for exactly one further round.** Fix it and dispatch **one** further round. Note it is a full re-review like any other here, not a scoped verification — this port passes no dispatch parameters, as stated above — so what "one further round" bounds is the count, not the reviewer's mission. If a `critical` still stands after it, or you cannot fix it, take the stop path this step has always had: clear the activation marker, surface the finding, write no Completion Summary. **The exemption is spent once for the whole task and does not renew** — one extra round in total, not one per pass, and a second `critical` arriving on that round does not buy a third. An unbounded carve-out would be the retry budget the paragraph below promises none of these adds. Never record a `critical` and complete.
+- **A finding whose `category` is `"security"` is never merely recorded, at any severity.** Fix it, or take that same stop path. `important` is the reviewer's default severity for one, which is precisely the level the recording bullet would otherwise sweep up — hence stating it separately. Judge by subject rather than by label as well: a `not_met` project check whose subject is security takes the stop path whatever its `category` string reads, since that string is one the reviewer assigns itself.
+- **An outstanding escalation takes the stop path too.** A Step 6a Critical attributed to this diff, or a Step 6c consideration still `partial` or `unmitigated`, is never recorded-and-completed.
+
+**A round whose findings are all cosmetic buys no further round.** Before incrementing on a `changes_requested`, read `issues[]`. If it parsed, is non-empty, **every** entry both carries `cosmetic` as the real boolean `true` **and** is a `minor` whose `category` is not `"security"`, **and no escalation is standing**, the loop has nothing left to converge on: do not increment, do not loop, go to Step 8 and carry those findings into the Completion Summary as recorded rather than fixed.
+
+**The escalation conjunct is part of the firing condition, not an observation about it.** A Step 6a Critical attributed to this diff, or a Step 6c consideration still `partial` or `unmitigated`, **voids this branch outright** — increment and loop as the escalation branches direct. Saying that escalations "do not live in `issues[]`" describes what this branch *reads*; it does not stop it *firing*, and this branch runs before the increment, so without the conjunct an unmitigated security consideration would ride a cosmetic-only round straight into a written Completion Summary. That is the outcome Step 8's own guarantee, this skill's rationalization table, `README.md` and `SECURITY.md` all say cannot happen — and it is why the conjunct is stated here rather than left to be inferred from the escalation branches below.
+
+**Re-read `severity` and `category` here rather than trusting the flag.** This branch fires **before the increment**, so it never reaches the carve-outs above — and the reviewer's own refusals are convention-only, exactly as this plugin concedes for `reason_code`, because there is no server to reject a bad shape. Step 7 is the only downstream that exists, and this conjunct is it doing its job: one entry whose `severity` is anything other than `minor`, or whose `category` is `"security"`, voids the branch outright however it is flagged, and the round increments and loops as normal. **Judge by subject as well as by label, exactly as the ceiling carve-out does** — a `not_met` project check whose subject is security voids this branch whatever its `category` string reads, and the reviewer's own contract files those under `category: "project_check"`, so the label test alone would miss the one shape this port most reliably produces. The ceiling's copy of this rule is out of reach from here, since this branch fires before the increment; that is exactly why it is restated rather than cross-referenced. A `cosmetic` that is not a real boolean — `1`, `"true"`, `"yes"` — is not coerced here either; it fails the test and the round loops.
+
+Three further boundaries keep this from becoming an escape hatch. An absent or empty `issues[]` is **never** an all-cosmetic round — a `changes_requested` with nothing enumerated still loops. The prose fallback below cannot reach this branch at all: with no array to read the rule is **inapplicable, not satisfied**. And the `skip-all` no-review branch never reaches this machinery — it goes straight to Step 8, with no report and no array. (Note the escalation case is a *conjunct in the firing condition* above, not a boundary listed here: a boundary describes a shape this branch cannot see, whereas an escalation is something it must actively check for.)
+
+**Reaching Step 8 is a conjunction.** Proceed only when the `## Review Report` reads `approved` — or this step reached one of the two sanctioned non-approval termini, the ceiling's record disposition or the all-cosmetic branch — **and** no Step 6a Critical attributed to this diff stands **and** every consideration Step 6c returned a verdict for came back `mitigated`. An `approved` report is necessary on the ordinary path and on no path sufficient by itself. A 6c that skipped satisfies its conjunct vacuously — the gate was closed or the dispatch failed outright — because it is the loop-back branch, not this one, that a 6c *finding* takes.
+
+**This is one cap, not two.** The ceiling is `max_review_iterations` and nothing else. None of the carve-outs above adds a counter, a retry budget or a terminal state — each routes to the stop this step has always had. Only the *ordinary* terminus moved: a loop that runs out with only `important` and `minor` outstanding now completes with them recorded, where it used to stop incomplete.
+
+**The ceiling is prose here, and the suite is not a runtime gate.** `test/smoke.sh` pins these clauses against silent deletion, which is a real bound on the repository — but it is a human and CI gate, not something a live drive runs. The ceiling, the disposition and both carve-outs are enforced by an agent reading this paragraph. Stated rather than implied, on the same terms this port already uses for `reason_code`.
 
 **Security-escalation branch.** If Step 6c returned any consideration whose status is `partial` or `unmitigated` — including one its fail-closed rule dispositioned that way from an anomalous verdict set — treat this iteration as `changes_requested` **whatever the `## Review Report`'s own status said**. Increment `review_iteration`, loop back to **Step 4**, address the consideration, then re-run Steps 5, 6 and **6c**.
 
-This deliberately adds **no second loop and no second cap**. It routes through the counter and the `max_review_iterations` bound that are already here, so a persistently unmitigated consideration stops the workflow instead of looping forever — and hitting the cap has the same terminal shape as any other exhausted review: clear the marker, stop, surface every consideration still `partial` or `unmitigated` with its evidence, write no Completion Summary. A task that exhausts the loop on a security consideration is incomplete in exactly the way one that exhausts it on a review finding is, and Step 1 picks it up again on the next run.
+This deliberately adds **no second loop and no second cap**. It routes through the counter and the `max_review_iterations` bound that are already here, so a persistently unmitigated consideration stops the workflow instead of looping forever — and hitting the ceiling with a consideration still outstanding takes the stop path above — the one an outstanding escalation always takes: clear the marker, surface every consideration still `partial` or `unmitigated` with its evidence, write no Completion Summary. That is the strict terminus, which this change left alone; only the ordinary one moved. A task that exhausts the loop on a security consideration is incomplete in exactly the way one that exhausts it on a review finding is, and Step 1 picks it up again on the next run.
 
 **One increment per iteration, not one per reason.** Two things can produce `changes_requested` on the same pass — the report's own status and an unaddressed consideration. That is **one** increment and **one** Step 4 pass addressing both; the re-run set is the union of what each names. Counting an increment per reason would burn the whole cap on a single pass, which is how a task with two ordinary findings ends terminally incomplete.
 
-**No-review branch.** If the matrix skipped Step 6 there is no `## Review Report` to read. That is not a parse failure, and the conservative `changes_requested` default below does **not** apply — proceed directly to Step 8 and record the skip there. This branch is reachable only from the `skip-all` row; every other row reviewed.
+**No-review branch.** If the matrix skipped Step 6 there is no `## Review Report` to read. That is not a parse failure, and the conservative `changes_requested` default below does **not** apply — proceed directly to Step 8 and record the skip there. This branch is reachable only from the `skip-all` row; every other row reviewed. It never reaches the ceiling machinery or the all-cosmetic branch above — there is no `issues[]` and no round to count.
 
-**JSON parse fallback.** If the `## Review Report` section has no fenced ```json block (e.g., the agent fell back to prose-only), parse the prose summary line instead: substring-match `"Approved"` → treat as `approved`; substring-match `"N issues found"` → treat as `changes_requested`. If neither pattern matches, treat as `changes_requested` (conservative default — better to retry than to falsely approve).
+**JSON parse fallback.** If the `## Review Report` section has no fenced ```json block (e.g., the agent fell back to prose-only), parse the prose summary line instead. **Test for refusal first, and match the affirmative only at the start of the line.** Substring-match `"issues found"` → treat as `changes_requested`. Otherwise, treat as `approved` **only if** the summary line *begins* with `Approved` **and** the report's `### Issues` subsection is empty or renders `- (none)`. If neither holds, treat as `changes_requested` (conservative default — better to retry than to falsely approve).
+
+**The ordering and the anchor are both load-bearing.** A bare substring test for `Approved` matches `Not Approved` — the exact shape a non-conforming reviewer produces, and the only kind that reaches this fallback at all, since a conforming one emits JSON. Testing the affirmative first, unanchored, would read a refusal as an approval and hand Step 8 a green status for a review that refused. The empty-`Issues` conjunct is the prose counterpart of the empty-`issues[]` check the JSON path applies above; without it this path would be the one place an approval may carry findings. **A report resolved this way still consumes a round** — it was readable, just not as JSON. But the all-cosmetic branch above is **inapplicable** on this path rather than satisfied: there is no `issues[]` array to read, and an absent array is never an all-cosmetic round.
 
 ### Step 8 — Completion summary + final-task detection + after_goal hook
 
@@ -563,7 +597,11 @@ Append a `## Completion Summary` section to the active task file at EOF. The sec
 - **The security-considerations outcome, when Step 6c ran:** how many considerations were listed and the verdict for each, with the evidence reference. Evidence is a `file:line` and a short note — **never quoted material from the diff**, since the summary is committed. When Step 6c skipped, say why in one clause, so "the plugin was absent" stays distinguishable from "the list was a placeholder" and from a corner cut.
 - **When the matrix skipped Steps 2 or 5, say which hook did not run**, not just which step was skipped. This port fires `## before_task` / `## after_task` on the boundary-marker writes, so a skipped boundary takes its hook with it and the user's `git pull`, tests or linters did not execute for this task. That is the least obvious consequence of the matrix and the one most likely to be mistaken for a hook failure.
 - A bullet list summarizing the hook results from Steps 2 and 5 (exit_code, brief output) — for the hooks that ran.
-- A reference to the embedded review JSON's `status` ("approved" — by contract, since we only reach Step 8 if Step 7 returned approved). **On the `skip-all` row there is no review**, so record that the matrix skipped it instead of citing a status that does not exist.
+- The review outcome, which now has three shapes rather than two:
+  - **Review ran and approved** → cite the embedded review JSON's `status`, which reads `approved`.
+  - **Review ran, did not approve, and Step 7 completed anyway** → the two sanctioned non-approval termini, the ceiling's record disposition and the all-cosmetic branch. Cite the status the report actually carries — `changes_requested` — name which terminus was taken, and list what was recorded rather than fixed. **Never write "approved" for a review that refused**, for the same reason the next shape forbids it for a review that never happened: this file is the port's whole audit trail, no server holds a second copy, and a false approval in it is unrecoverable.
+  - **On the `skip-all` row there is no review** → record that the matrix skipped it instead of citing a status that does not exist.
+- **Any finding recorded rather than fixed** — at the review ceiling or on the all-cosmetic branch — by `severity`, `category` and `file:line`, restated in your own words. **Never copy a credential, token, internal hostname or path outside the project out of a finding**; substitute `[REDACTED — text embedded a credential]` and identify it by its `file:line`. Omit this bullet only when the loop converged on an approval with nothing outstanding. A `critical` or a `category: "security"` finding never appears here: Step 7 routes both to its stop path, and a stop writes no Completion Summary for them to appear in.
 
 Worked example of the skip record, for a `small` task listing one key file:
 
@@ -614,34 +652,46 @@ Applied to this loop the mapping is narrow. `explorer`, `planner` and `reviewer`
 
 **Record a duration only where one was measured.** The hook executor emits `duration_seconds` in its success JSON, so `before_task` and `after_task` have a real figure to record. Subagent dispatches usually do not, and a dispatched step with no available duration is recorded as dispatched **with the duration omitted** — never with an invented one. A fabricated number is worse than an absent one, because it looks like data.
 
+<!-- canon:dispatch-count-telemetry v1 -->
+
+**Record how many times a subagent was dispatched, where you know it.** A `dispatched: true` entry may carry an optional integer `dispatch_count`. Omitting it is always allowed, and it is a cost signal rather than a progress one.
+
+**It counts dispatches, not rounds.** A dispatch that crashed and was re-dispatched still spent its tokens, so it counts here even though Step 7's ceiling deliberately does not count it as a round. On the `reviewer` entry in particular, `dispatch_count` is **not** `review_iteration` and the two will legitimately differ; never fill one from the other.
+
+**Only three names can carry it meaningfully** — `enricher`, `explorer` and `reviewer`, the steps that actually dispatch a subagent. `before_task` and `after_task` are hook executions and `implementation` is work done in the main loop, so a count there would be measuring nothing.
+
+**Read it with care, and do not do arithmetic on it.** It says how many times a subagent was invoked and nothing else. It is not a token count and must never be presented as one; it does not rank two tasks by cost, because dispatches of different kinds cost very different amounts; and `duration_seconds` divided by `dispatch_count` is not a per-dispatch figure, because the two measure different populations and a dispatch with no measured duration contributes to one and not the other. An absent count means it was not recorded, never that the step ran once. And nothing validates the value on the way in — this plugin makes no network call, so the key is closed by convention exactly as `reason_code` is.
+
+**Record a count only where you actually know it**, on the same rule as the duration above: an invented number is worse than an absent one.
+
 **Render both a table and a fenced JSON block.** The table is what a human reads; the JSON is what tooling parses. This mirrors `task-reviewer`, which already emits a prose summary line alongside a fenced ```json block for exactly this reason. The table is the primary carrier — the summary is read by people first, and the JSON must never be the only place a fact appears.
 
-**Telemetry carries step names, durations and reasons only.** No command output, no environment values, no paths outside the project. The Completion Summary is committed. A skip reason is free text you write, so describe the matrix rule in your own words and never quote task-file text verbatim — that text is agent-authored and untrusted.
+**Telemetry carries step names, durations, dispatch counts and reasons only.** No command output, no environment values, no paths outside the project. The Completion Summary is committed. A skip reason is free text you write, so describe the matrix rule in your own words and never quote task-file text verbatim — that text is agent-authored and untrusted.
 
 Render it like this:
 
 ````markdown
 ### Workflow telemetry
 
-| Step | Dispatched | Duration | Reason |
-|---|:---:|---|---|
-| `enricher` | no | — | All four operational sections already populated |
-| `before_task` | yes | 3s | — |
-| `explorer` | yes | — | — |
-| `planner` | no | — | Decision matrix: `explore-review` row — planning is `full`-only |
-| `implementation` | yes | — | — |
-| `after_task` | yes | 12s | — |
-| `reviewer` | yes | — | — |
+| Step | Dispatched | Dispatches | Duration | Reason |
+|---|:---:|:---:|---|---|
+| `enricher` | no | — | — | All four operational sections already populated |
+| `before_task` | yes | — | 3s | — |
+| `explorer` | yes | 1 | — | — |
+| `planner` | no | — | — | Decision matrix: `explore-review` row — planning is `full`-only |
+| `implementation` | yes | — | — | — |
+| `after_task` | yes | — | 12s | — |
+| `reviewer` | yes | 1 | — | — |
 
 ```json
 {"workflow_steps":[
   {"name":"enricher","dispatched":false,"reason":"All four operational sections already populated"},
   {"name":"before_task","dispatched":true,"duration_seconds":3},
-  {"name":"explorer","dispatched":true},
+  {"name":"explorer","dispatched":true,"dispatch_count":1},
   {"name":"planner","dispatched":false,"reason":"Decision matrix: explore-review row — planning is full-only"},
   {"name":"implementation","dispatched":true},
   {"name":"after_task","dispatched":true,"duration_seconds":12},
-  {"name":"reviewer","dispatched":true}
+  {"name":"reviewer","dispatched":true,"dispatch_count":1}
 ]}
 ```
 ````
@@ -714,7 +764,7 @@ There are five exits, and all five clear:
 | Goal already complete | Step 1, when every `taskN.md` already has a Completion Summary |
 | Malformed goal directory | Step 1's gap-handling hard error, plus the missing-`goal.md` and no-`taskN.md` errors |
 | Explorer or reviewer dispatch failure | Steps 3 and 6 |
-| Review-iteration cap reached | Step 7, when `review_iteration >= max_review_iterations` |
+| Review ceiling reached with a `critical`, a security finding, or a standing escalation | Step 7. Reaching it with only `important`/`minor` outstanding is **not** an exit — those are recorded and the task completes |
 
 A blocking `before_task` / `after_task` failure also stops the workflow (Steps 2 and 5) — clear the marker there too.
 
@@ -842,7 +892,7 @@ If the user wants build/test/lint runs as part of the workflow, they put them in
 - **task-explorer agent dispatch fails or returns an error** — surface the explorer's error and stop. The explorer's findings are a prerequisite for high-quality implementation.
 - **task-reviewer agent dispatch fails or returns an error** — surface the reviewer's error and stop. Without a review verdict, the workflow can't decide Step 7.
 - **task-reviewer's `## Review Report` has no fenced JSON block** — fall back to prose-substring matching per Step 7's JSON parse fallback. Conservative default on ambiguity: treat as `changes_requested`.
-- **Review-loop exhausts max_review_iterations** — clear the activation marker and stop without writing the Completion Summary. The task file retains its latest `## Review Report` section as the audit trail. The user can manually fix the issues and re-run the workflow; on re-run the task is "incomplete" (no Completion Summary) so Step 1 picks it up again.
+- **Review-loop reaches the ceiling with a `critical`, a security finding, or a standing 6a/6c escalation** — clear the activation marker and stop without writing the Completion Summary. (Reaching it with only `important` and `minor` outstanding is not a stop: Step 7 records those and the task completes.) The task file retains its latest `## Review Report` section as the audit trail. The user can manually fix the issues and re-run the workflow; on re-run the task is "incomplete" (no Completion Summary) so Step 1 picks it up again.
 - **after_goal hook fails after goal.md Completion Summary is written** — surface the failure but do NOT roll back the goal.md mutation. The user can re-run the after_goal hook manually (e.g., by inspecting `.stride_lite.md` and running the commands directly).
 
 ## Concrete walkthrough
@@ -867,25 +917,25 @@ A two-task goal at `docs/implementation/PENDING/add-notifications/` containing `
 ````markdown
 ### Workflow telemetry
 
-| Step | Dispatched | Duration | Reason |
-|---|:---:|---|---|
-| `enricher` | yes | — | — |
-| `before_task` | yes | 3s | — |
-| `explorer` | yes | — | — |
-| `planner` | yes | — | — |
-| `implementation` | yes | — | — |
-| `after_task` | yes | 12s | — |
-| `reviewer` | yes | — | — |
+| Step | Dispatched | Dispatches | Duration | Reason |
+|---|:---:|:---:|---|---|
+| `enricher` | yes | 1 | — | — |
+| `before_task` | yes | — | 3s | — |
+| `explorer` | yes | 1 | — | — |
+| `planner` | yes | — | — | — |
+| `implementation` | yes | — | — | — |
+| `after_task` | yes | — | 12s | — |
+| `reviewer` | yes | 1 | — | — |
 
 ```json
 {"workflow_steps":[
-  {"name":"enricher","dispatched":true},
+  {"name":"enricher","dispatched":true,"dispatch_count":1},
   {"name":"before_task","dispatched":true,"duration_seconds":3},
-  {"name":"explorer","dispatched":true},
+  {"name":"explorer","dispatched":true,"dispatch_count":1},
   {"name":"planner","dispatched":true},
   {"name":"implementation","dispatched":true},
   {"name":"after_task","dispatched":true,"duration_seconds":12},
-  {"name":"reviewer","dispatched":true}
+  {"name":"reviewer","dispatched":true,"dispatch_count":1}
 ]}
 ```
 ````
@@ -896,31 +946,31 @@ A two-task goal at `docs/implementation/PENDING/add-notifications/` containing `
 
 - **Step 1.** task1.md now has a Completion Summary → skip. task2.md is next.
 - **Step 1a.** All four operational sections are populated → no enricher dispatch. Resolve the matrix: `small` with 2 distinct key files → the `explore-review` row. Explorer and reviewer run; **the planner does not**.
-- **Steps 2–7.** Same pattern as iteration 1, minus Step 3a. The reviewer first returns `changes_requested` (the BoardLive subscribe wasn't filtering by `board_id`), so the workflow loops back to Step 4, the fix is made, and Steps 5, 6 and 7 re-run — `after_task` therefore fires **twice** for this task, which is correct: the user's tests must run against the revised code. The second review returns `approved` at review-loop iteration 2, under the cap of 3.
+- **Steps 2–7.** Same pattern as iteration 1, minus Step 3a. The reviewer first returns `changes_requested` (the BoardLive subscribe wasn't filtering by `board_id`), so the workflow loops back to Step 4, the fix is made, and Steps 5, 6 and 7 re-run — `after_task` therefore fires **twice** for this task, which is correct: the user's tests must run against the revised code. The second review returns `approved`. Its telemetry records `dispatch_count: 2` on the `reviewer` entry, because the reviewer was invoked twice. **`review_iteration` is 1**, not 2: it increments only on a `changes_requested`, and the second review approved. The two numbers are different quantities and this is exactly where they diverge — never fill one from the other. Had that second review also refused, the counter would have gone to 2 and reached the ceiling, so the ceiling is reached by the second *refusal*, not by the second dispatch.
 - **Step 8.** Append `## Completion Summary` to task2.md. Its telemetry records the planner skip with the rule that caused it:
 
 ````markdown
 ### Workflow telemetry
 
-| Step | Dispatched | Duration | Reason |
-|---|:---:|---|---|
-| `enricher` | no | — | All four operational sections already populated |
-| `before_task` | yes | 3s | — |
-| `explorer` | yes | — | — |
-| `planner` | no | — | Decision matrix: `small` complexity, 2 key files → `explore-review` row; planning is `full`-only |
-| `implementation` | yes | — | — |
-| `after_task` | yes | 9s | — |
-| `reviewer` | yes | — | — |
+| Step | Dispatched | Dispatches | Duration | Reason |
+|---|:---:|:---:|---|---|
+| `enricher` | no | — | — | All four operational sections already populated |
+| `before_task` | yes | — | 3s | — |
+| `explorer` | yes | 1 | — | — |
+| `planner` | no | — | — | Decision matrix: `small` complexity, 2 key files → `explore-review` row; planning is `full`-only |
+| `implementation` | yes | — | — | — |
+| `after_task` | yes | — | 9s | — |
+| `reviewer` | yes | 2 | — | — |
 
 ```json
 {"workflow_steps":[
   {"name":"enricher","dispatched":false,"reason":"All four operational sections already populated"},
   {"name":"before_task","dispatched":true,"duration_seconds":3},
-  {"name":"explorer","dispatched":true},
+  {"name":"explorer","dispatched":true,"dispatch_count":1},
   {"name":"planner","dispatched":false,"reason":"Decision matrix: small complexity, 2 key files -> explore-review row; planning is full-only"},
   {"name":"implementation","dispatched":true},
   {"name":"after_task","dispatched":true,"duration_seconds":9},
-  {"name":"reviewer","dispatched":true}
+  {"name":"reviewer","dispatched":true,"dispatch_count":2}
 ]}
 ```
 ````
@@ -943,8 +993,8 @@ Every row is an excuse an agent working *this* plugin has a real reason to reach
 | "…resolve the decision matrix now; the enricher can run after." | A sparse task file lists **zero** key files, so it takes the `skip-all` row. | The one task whose metadata was too thin to judge gets no exploration and no review — exactly inverted. |
 | "…skip the explorer, this task is obviously small." | The matrix decides from complexity and key-files count, not from your read. | An unrecorded skip no one can trace to a rule; the audit trail the telemetry exists for is gone. |
 | "…dispatch the reviewer anyway even though the matrix said `skip-all`." | Deviating *toward* more work is still deviating. | The Completion Summary records a step the matrix did not call for, and the next reader cannot tell rule from whim. |
-| "…write the Completion Summary; the reviewer's `changes_requested` looked minor." | Step 7 is binary: `approved` proceeds, anything else loops. | The review loop is defeated and the task ships unreviewed — the single thing the loop exists to prevent. |
-| "…force-approve; the reviewer keeps raising the same issue and we're at the cap." | Hitting the cap is a terminal stop with the issue surfaced, not a formality to clear. | An unresolved defect ships with a Completion Summary asserting it was reviewed. |
+| "…write the Completion Summary; the reviewer's `changes_requested` looked minor." | Step 7 has exactly two sanctioned ways to complete without an approval — the ceiling's record disposition, reached only once the rounds are spent, and the all-cosmetic branch, reached only when every entry passes the severity and category re-check. Outside those two, `approved` proceeds and anything else loops. | The review loop is defeated and the task ships unreviewed — the single thing the loop exists to prevent. |
+| "…force-approve; the reviewer keeps raising the same issue and we're at the cap." | Reaching the ceiling is a disposition, never a formality to clear by approving. With only `important` and `minor` left it records them and completes; with a `critical`, a security finding or a standing escalation it stops with the issue surfaced. Neither of those is an approval. | An unresolved defect ships with a Completion Summary asserting it was reviewed. |
 | "…retry the boundary write; the `before_task` hook is blocking me." | The block **is** the hook working. A failing blocking hook stops the workflow. | You defeat the user's own quality gate — their `git pull` or test suite failed and you proceeded anyway. |
 | "…skip the marker write for this small task to save the hook run." | On `skip-all` the matrix already skips it. Outside that row the marker write is what fires the hook. | The user's tests silently do not run for a task that was supposed to get them. |
 | "…leave the activation marker; the next run will overwrite it." | Every exit clears it, and a stale one keeps hooks armed for up to four hours. | An unrelated edit in the same project later runs the user's hook commands outside any workflow. |
@@ -974,12 +1024,17 @@ STEP 6   reviewer    dispatch unless skip-all
 STEP 6a  explore     gated: plugin + manual tests + the user's affirmative. Skip is free
 STEP 6b  harden      gated: drafts stay staged unless the whole suite runs clean
 STEP 6c  security    gated: real considerations only. Unconfirmable ≠ mitigated
-STEP 7   decide      approved → 8 | anything else → 4, under the cap. One increment per pass
+STEP 7   decide      approved+empty issues[] → 8 | anything else → 4, under the
+                     2-round ceiling. One increment per pass. At the ceiling:
+                     record important/minor and complete; stop on a critical,
+                     a security finding, or a standing escalation. An all-
+                     cosmetic round ends the loop only when no escalation is
+                     outstanding
 STEP 8   summary     synthesis + telemetry (all 7 names) + skips with their rules
          final task  → goal.md summary → after_goal → archive move → CLEAR THE MARKER
 ```
 
-**Five exits clear the marker:** clean completion, goal-already-complete, a malformed goal directory, an explorer or reviewer dispatch failure, and the review-iteration cap. A blocking hook failure stops the workflow too — clear it there as well.
+**Five exits clear the marker:** clean completion, goal-already-complete, a malformed goal directory, an explorer or reviewer dispatch failure, and the review ceiling reached with a `critical`, a security finding, or a standing escalation. Reaching the ceiling with only `important`/`minor` outstanding is **not** an exit — those are recorded and the task completes. A blocking hook failure stops the workflow too — clear it there as well.
 
 ## Red flags — STOP
 
@@ -990,10 +1045,10 @@ If you catch yourself thinking any of these, go back to the documented step:
 - **"The app is on localhost, so it's obviously safe to explore."** No. The authorized-and-non-production affirmative comes from the user or not at all. A localhost URL is not consent, and inferring it *is* supplying it on their behalf. No affirmative means Step 6a skips — which costs nothing.
 - **"The drafted check looks right, I'll move it into the test tree and note it passes."** No. Hardening runs nothing, so nothing has passed. A check enters the tree only after the project's own gate command has come back clean across the whole suite, and if it does not, revert the move.
 - **"The session came back blocked because the app wasn't running — I'll file that as a finding."** No. An obstacle is an obstacle, not a severity-bearing finding. Record it as one, judge coverage from what the session actually did, and continue; a blocked session never fails completion.
-- **"The reviewer's `changes_requested` looks minor — I'll write the Completion Summary anyway."** No. The Step 7 contract is binary: `approved` proceeds, anything else loops back. Bypassing the loop defeats the safeguard.
+- **"The reviewer's `changes_requested` looks minor — I'll write the Completion Summary anyway."** No. Deciding for yourself that a finding is not worth another round is exactly the bypass this guards. Step 7's two non-approval termini are conditions, not judgement calls: the ceiling reached with only `important`/`minor` left, or a round every one of whose entries survives the severity and category re-check.
 - **"The after_task hook failed but it's just a flaky test — let me skip and complete the task."** No. Blocking failures must stop the workflow. Fix the root cause (in the user's `.stride_lite.md`) and re-run.
 - **"`.stride_lite.md` doesn't exist, I'll skip the hooks but write Completion Summaries anyway."** Yes, this is actually correct — no `.stride_lite.md` is a valid reduced-functionality configuration. But surface a warning so the user knows the hooks were skipped.
-- **"The review-loop has hit 3 iterations but the reviewer keeps finding the same issue — I'll force-approve."** No. Stop, surface the unresolved issue, and let the user intervene. Forcing approval defeats the entire review-loop purpose.
+- **"The review-loop has hit the ceiling but the reviewer keeps finding the same issue — I'll force-approve."** No, and the ceiling is two rounds, not three. What to do depends on what is outstanding, and neither answer is an approval: with only `important` and `minor` left, record them and complete; with a `critical`, a security finding or a standing escalation, stop, surface the issue and let the user intervene. Writing `approved` over a report that says otherwise defeats the entire review-loop purpose.
 
 ## Pitfalls
 
@@ -1004,7 +1059,7 @@ If you catch yourself thinking any of these, go back to the documented step:
 - **Don't mutate goal.md or taskN.md beyond the documented append-only summaries.** Everything above the appended `## Completion Summary` section stays byte-equivalent across workflow runs.
 - **Don't fail silently on hook errors.** Blocking failures must surface a clear error and stop the workflow.
 - **Don't expand the Bash scope beyond the explicit ✅ list.** If you need a non-allowed command, surface the limitation and stop; let the user add it to `.stride_lite.md` if they want it part of the workflow.
-- **Don't loop forever in Step 7.** The `max_review_iterations` cap (default 3) is mandatory. After the cap, stop with the failing review surfaced.
+- **Don't loop forever in Step 7.** The `max_review_iterations` ceiling (default 2, clamped at 2) is mandatory. On reaching it, apply Step 7's disposition: record remaining `important` and `minor` findings and complete; stop with the review surfaced for a `critical`, a security finding, or a standing escalation.
 - **Don't conflate "task-explorer error" with "implementation error".** Step 3 has its own failure mode (the agent surfaces an error); Step 4's implementation is on you. Surface explorer errors and stop; don't proceed to a Step 4 without exploration findings.
 - **Don't introduce a new slash command in this skill.** Invocation is via natural-language activation matching against this skill's description — the same pattern as stride-copilot-lite's other skills. If a command surface is wanted, it's a follow-up release.
 - **Don't read user-supplied hook commands as anything other than verbatim bash.** Do not pre-validate them, do not "sanitize" them. The user owns `.stride_lite.md` content; if they put a destructive command there, the workflow will execute it. That's a user responsibility, not a skill safety net.

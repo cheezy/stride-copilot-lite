@@ -2,6 +2,108 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.7.0] - 2026-09-06
+
+**Breaking:** the default `max_review_iterations` drops from 3 to 2, and a value above 2 is now clamped rather than honoured. A caller passing `max_review_iterations: 5` will see different behaviour. Reaching the ceiling is also no longer a single unconditional stop.
+
+### Changed — the review loop's ceiling is two rounds, and reaching it records rather than always stopping (W2171)
+
+The fleet canon (`stride/docs/port-canon.md`, entry `review-round-cap`) puts the ceiling at two and makes the terminus depend on what is still outstanding. Both of its applicability grounds hold here — this port runs a reviewer and a fix-then-re-review loop that can fail to converge — so the rule is adopted rather than narrowed.
+
+The default is now two and a larger value is clamped; `1` is still honoured, because lowering a ceiling is always safe. The clamp is **performed by a step in Step 7** rather than described in the inputs table, since a bound stated only in a table cell does not bind the procedure that reads the value. A round is now defined as a reviewer dispatch that left a readable `## Review Report`, so a dispatch that errored or wrote nothing is re-dispatched once at no cost in rounds; a prose-only report is explicitly *not* an unreadable one and still consumes a round.
+
+Reaching the ceiling now splits four ways. Remaining `important` and `minor` findings are **recorded** in the Completion Summary — by severity, category and `file:line`, restated rather than pasted — and the task completes. A `critical` that still stands is exempt **for exactly one further round**, spent once for the whole task and never renewed; if it still stands after that round the drive stops. A finding whose `category` is `"security"` is never merely recorded at any severity, and is judged by what it describes rather than by a label the reviewer assigns itself. An outstanding 6a/6c escalation takes the stop path too.
+
+**This adds no second cap and no new terminal state.** The standing prohibition that says so is left in the file unedited; each carve-out routes to the stop Step 7 has always had. Only the *ordinary* terminus moved.
+
+Round two is a **full** re-review rather than a scoped verification, and that is a deliberate divergence from the reference implementation: this port dispatches both subagents as black boxes by task-file path and passes no other parameters, so there is no channel to tell the reviewer which round it is. No `review_round` input was invented. The cost is the token saving a scoped round would buy; the canon's "the ceiling scopes the mission, never the evidence" clause is satisfied here by construction.
+
+### Added — a cosmetic finding is a disposition, and an all-cosmetic round ends the loop (W2171)
+
+An `issues[]` entry may now carry an optional boolean `cosmetic` (canon entry `cosmetic-finding-class`). It is a disposition, not a fourth severity: the entry keeps its place, its `severity` and its `category`, and the top-level status is decided exactly as before. A `changes_requested` round whose entries are every one of them a real-boolean `cosmetic` on a non-security `minor` does not increment the counter and does not loop.
+
+Three shapes are refused: `cosmetic: true` beside any severity other than `minor`; beside `category: "security"` at any severity; and any value that is not a real boolean. **The security exclusion ships in the same commit as the flag** — a port carrying the flag without it would be worse off than one carrying neither.
+
+**Step 7 re-reads `severity` and `category` itself rather than trusting the flag**, and that consumer-side conjunct is load-bearing. The branch fires *before* the increment, so it never reaches the ceiling carve-outs; without the re-check a single mis-flagged entry would carry a `critical` or a security finding to a completed task. This plugin has no server to reject a bad shape, so Step 7 is the only downstream that exists.
+
+Three further boundaries bound the rule: an absent or empty `issues[]` is never an all-cosmetic round; the prose fallback cannot reach the branch at all, where the rule is *inapplicable* rather than satisfied; and the `skip-all` row never reaches the machinery. The escalation case is **not** among them — it is a conjunct of the firing condition, for the reason the Fixed section below gives.
+
+`cosmetic` is documented **locally** in the reviewer contract rather than by citation, on the reason that file already gives: a citation into another repository cannot be checked from this one. No `issue_counts` key was added — it has no consumer here and no rule requires it — and the absence is pinned by a negative assertion.
+
+### Added — `dispatch_count` on a workflow_steps entry, with the limits on reading it (W2171)
+
+Unlike the sibling lite ports, this plugin genuinely emits a `workflow_steps` object, so canon entry `dispatch-count-telemetry` applies here on its own terms rather than being narrowed. A `dispatched: true` entry may carry an optional integer `dispatch_count`, documented beside the existing duration rule; omitting it stays valid.
+
+It counts **dispatches, not rounds** — a crashed dispatch spent its tokens even though Step 7 deliberately does not count it as a round — so on the `reviewer` entry it is not `review_iteration` and the two legitimately differ. It is meaningful only on the three names that actually dispatch a subagent. And it must be read as a cost signal and nothing more: not a token count, not a ranking between tasks, and never divided into `duration_seconds`, since the two measure different populations. Nothing validates it on the way in — the key is closed by convention, exactly as `reason_code` already is here.
+
+The rendered telemetry table gains a `Dispatches` column in all three examples, honouring this port's own rule that the table is the primary carrier and the JSON must never be the only place a fact appears.
+
+### Fixed — an approval can no longer carry findings, and Step 8 no longer records a refusal as approved (W2171)
+
+The reviewer's approval condition read "no critical or important issues", which let a `minor` carrying `category: "security"` ride an approval into Step 8, where none of the ceiling carve-outs runs — the finding would have been recorded rather than fixed, past the rule that says a security finding never is. `approved` now requires an **empty** `issues[]`, every severity with `minor` named explicitly, and Step 7 refuses a non-conforming approval that carries findings. An unrecognized status is treated conservatively as `changes_requested` and never as an approval.
+
+Step 8's review-outcome contract previously asserted the status is `approved` "by contract, since we only reach Step 8 if Step 7 returned approved". Both new termini falsify that premise, so an agent following it would have written `approved` into the audit trail of a task the reviewer refused — the same error the sibling bullet already forbade for a skipped review. It now has three shapes, and the non-approval shape reports the status the report actually carries.
+
+The reviewer's cited `schema_version` moves from `1.1` to `1.7`. That citation was already behind before this change — the `consideration_verdicts` array this file documents corresponds to upstream work that landed at 1.5 — so this corrects a pre-existing inconsistency as well as covering `cosmetic`. The array's port-local **name** is unchanged.
+
+### Added — the ported rules are pinned by this port's own suite (W2171)
+
+All three rules land as prose here, so `test/smoke.sh` is the only mechanical bound available. Assertions were added covering the ceiling and its performing clamp, each of the four ceiling dispositions including the non-renewal of the `critical` carve-out, the all-cosmetic branch's pre-increment placement and both halves of its severity/category re-check, the cosmetic definition and its three refusals, the security-category exclusion specifically, the top-level verdict vocabulary, the empty-`issues[]` approval rule, Step 8's non-approval shape, the redaction clause at both recorded-finding write sites, the `dispatch_count` writing rules and their reading limits, all three canon anchors at exactly one occurrence each, and negative pins proving no `issue_counts` key and no `review_round` parameter were invented.
+
+Every assertion was **mutation-tested** by a harness that deletes each needle's clause in turn against a byte-verified copy of the tree and requires that named assertion to go red; every needle in the block binds — counted from the file rather than asserted here, since a stale count is how this claim went wrong the first time. Four did not bind on the first pass and were repaired: three needled a neighbouring sentence instead of the clause they were named for — including the refusal of `cosmetic: true` above `minor`, which could have been deleted from the reviewer contract with the suite green — and one matched at two sites, so deleting either left it passing. An assertion that cannot fail is not a bound.
+
+**A stated limit on what these assertions can do.** They are presence checks: they pin a clause against silent deletion, and they cannot detect a *contradiction added elsewhere in the file*. Every defect fixed in the round below survived a fully green suite. Mechanical coverage of agreement between two sites would need a different assertion shape, which this release does not attempt.
+
+### Fixed — three paths could reach a completed task with a security finding standing (W2171)
+
+Found by review before release, all three inside this release's own new text, and all three invisible to a fully green suite because presence assertions cannot see a contradiction.
+
+**The all-cosmetic branch had no standing-escalation guard.** It fires *before* the increment, so it never reaches the ceiling carve-outs, and its firing condition was stated purely over `issues[]`. A Step 6c consideration returned `unmitigated`, or a Step 6a Critical attributed to this diff, lives outside `issues[]` — so a round whose only finding was a cosmetic `minor` satisfied the branch and went straight to Step 8 with the escalation standing. Saying escalations "do not live in `issues[]`" described what the branch *reads*; it did not stop it *firing*. "No escalation is standing" is now a conjunct of the firing condition, and the reference implementation's **"Reaching Step 8 is a conjunction"** paragraph — absent from this port until now — was added alongside it.
+
+**The all-cosmetic branch tested the `category` label but not the subject.** The ceiling carve-out judges a security finding by what it describes, precisely because `category` is a string the reviewer assigns itself; that clause existed only at the ceiling, which this branch cannot reach. A `not_met` project check with a security subject is filed by the reviewer's own contract under `category: "project_check"`, so it passed the label test — the one shape this port most reliably produces. The subject test is now stated at the branch too, and the boundary it displaced (`skip-all` never reaches this machinery) was a tautology, since `skip-all` produces no report at all.
+
+**The prose fallback resolved a refusal as an approval.** It substring-matched `"Approved"` first and unanchored, so a non-conforming summary line reading `Not Approved — 3 issues found` matched. That is the only kind of line reaching this path, since a conforming reviewer emits JSON. It now tests for refusal first, matches the affirmative only at the start of the line, and additionally requires the `### Issues` subsection to be empty — the prose counterpart of the empty-`issues[]` check the JSON path already gained.
+
+### Fixed — the non-conforming-approval path looped without incrementing (W2171)
+
+The new check that refuses an approval carrying findings said "treat it as `changes_requested` and loop" but gave its own inline instruction rather than routing into the branch that increments, so nothing bounded it. A reviewer persistently emitting `approved` alongside findings could loop indefinitely — re-firing the user's `## after_task` hook on every pass — with `review_iteration` never moving. The guard against a bad approval was the one path the ceiling did not bound. It now routes into the `changes_requested` branch and consumes a round like any other refusal. **This defect is inherited from `stride-lite`, which shipped the same wording; it is fixed there in the same goal.**
+
+### Fixed — the `critical` carve-out asked for a scoped round this port cannot dispatch (W2171)
+
+Step 7 states that a scoped round is impossible here *by construction*, then eleven lines later inherited an instruction to "dispatch one round scoped to that finding". An agent at that fork had to either contradict the impossibility claim or invent a dispatch parameter the port's pitfalls and its own smoke pin both forbid. The carve-out now says one *further* round and notes explicitly that it is a full re-review, so what "one" bounds is the count and not the reviewer's mission.
+
+### Fixed — the worked walkthrough taught the conflation the new rule forbids (W2171)
+
+The concrete walkthrough asserted `review_iteration also reached 2` for a `changes_requested`-then-`approved` sequence. Step 7 increments only on a refusal, so the correct value is 1. It was the file's only place where the counter takes a concrete value, and it filled it from `dispatch_count` — exactly what the new rule says never to do. Corrected, with the divergence spelled out at the point a reader meets it.
+
+### Fixed — stale summaries of the old terminus, and an unrecorded cannot-apply (W2171)
+
+The quick-reference card's exit list still named "the review-iteration cap" as an unconditional marker-clearing exit, contradicting the exits table this release corrected; its `STEP 7` line still read `approved → 8 | anything else → 4`, omitting both new termini and the empty-`issues[]` requirement. The staleness assertion missed both because it pinned the literal `3` and these named the old terminus without the number; a second assertion now pins the phrase. `README.md` gained the release's most user-visible consequence, which it had not stated: a task can now complete with unfixed findings recorded in its committed Completion Summary.
+
+The third sub-decision recorded as cannot-apply was missing: the reference implementation persists the round count in a file, and this port has nowhere to put one — it writes no state outside the goal directory, and its `## Review Report` is replace-in-place, so round one's report cannot serve as the tally either. That is now recorded with its structural reason rather than left to read as an oversight, and `dispatch_count` on the `reviewer` entry is named as what stands in for the lost audit trail.
+
+### Fixed — two assertion needles never ran, and the suite stayed green (W2171)
+
+Found by review after the second round, in an edit made to *repair* two earlier needles. Both replacements left their single quote unterminated, so each needle string ran on to the next apostrophe several lines later. The consequence was worse than a dead assertion: the swallowed lines contained two further `g417_has` calls that therefore never executed, the surviving needle degraded into a multi-line disjunction that matched any one of its lines, and the unquoted remainder executed two backtick spans as shell commands — the suite printed `command not found` to stderr and still exited 0. The redaction clause at the Step 8 write site, which is the one that produces committed content, had no binding pin at all.
+
+Repairing the quoting alone would have turned the suite red rather than green, because the dead Step 8 needle had been written against text that does not appear in the file. Both needles are corrected to text that does.
+
+**A gate now checks this mechanically rather than by eye:** every needle line in this block must close its quote on its own line, asserted by walking the block. The gate was itself verified by breaking a quote on a copy and confirming it goes red.
+
+**And the audit claim is corrected a second time.** The previous entry said "all 47 bind"; the block declares 49 `g417_has` calls and two of them were not running when that was written. The mutation harness now refuses to report at all unless the number of calls it parsed equals the number declared in the file — the check that would have caught both the original miscount and the swallowed pair. All 49 bind. Neither this entry nor the suite comment states a count as a fact to be trusted; both say to count from the file.
+
+### Fixed — a rationalization row still described the ceiling as a terminal stop (W2171)
+
+The row answering "force-approve; the reviewer keeps raising the same issue and we're at the cap" still said "Hitting the cap is a terminal stop with the issue surfaced". Under this release it is a disposition, not a stop: with only `important` and `minor` outstanding the findings are recorded and the task completes. The conclusion — do not force-approve — was still right, but its stated reason had become false and contradicted Step 7, the exits table and the quick-reference card. It slipped both staleness pins because it carries neither the literal `3` nor the phrase they pin.
+
+Also corrected in this round: `README.md`'s lifecycle sentence had a clause duplicated by an earlier edit, so it read as though the Completion Summary is appended twice per task; the `Added` section above still said "four further boundaries" where the shipped text says three plus a conjunct; and the quick-reference card's new `STEP 7` block ended on a wrapped "up" that read as a truncation.
+
+**These fixes were made after the second review round and are not themselves covered by a review.** The two-round ceiling this release introduces is the same one applied to its own development: round two was the last, and what it and the parallel security re-verification found was fixed rather than recorded, because a finding against a redaction control is not something to record and ship.
+
+### Note — `stop-hook-capability` remains unaddressed (W2171)
+
+This port is still `MISSING` on canon entry `stop-hook-capability`, and the fleet drift check still exits non-zero because of it. That is a pre-existing gap shared with several other ports, outside this release's scope, and is recorded here so the release note and the red check agree.
+
 ## [0.6.0] - 2026-08-20
 
 ### Added — the decision matrix states its authority and its reading rule (W2113)

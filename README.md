@@ -75,7 +75,7 @@ Activation phrases (intent + path):
 - "Resume the add-notifications goal at docs/implementation/PENDING/add-notifications/."
 - "Process all tasks in docs/implementation/PENDING/<slug>/."
 
-The workflow iterates each `taskN.md` in numeric order: select-next → `## before_task` hook → dispatch `stride-copilot-lite:task-explorer` → implement → `## after_task` hook → dispatch `stride-copilot-lite:task-reviewer` → review-loop (cap 3) → append `## Completion Summary` → next task. On the final task it also writes the goal-level `## Completion Summary` to `goal.md`, fires `## after_goal`, and moves the directory from `PENDING/` to `IMPLEMENTED/`.
+The workflow iterates each `taskN.md` in numeric order: select-next → `## before_task` hook → dispatch `stride-copilot-lite:task-explorer` → implement → `## after_task` hook → dispatch `stride-copilot-lite:task-reviewer` → review-loop (ceiling: two rounds, clamped) → append `## Completion Summary` → next task. On the final task it also writes the goal-level `## Completion Summary` to `goal.md`, fires `## after_goal`, and moves the directory from `PENDING/` to `IMPLEMENTED/`.
 
 **The loop scales to the task.** A one-line fix should not pay two subagent dispatches and two hook runs, so a decision matrix reads each task's complexity and its `## Key files` count and picks a branch:
 
@@ -86,7 +86,7 @@ The workflow iterates each `taskN.md` in numeric order: select-next → `## befo
 | `medium` or `large` | any | yes | yes | yes |
 | absent or unreadable | any | yes | yes | yes |
 
-**Every task's Completion Summary records what actually ran.** All seven task-level steps — `enricher`, `before_task`, `explorer`, `planner`, `implementation`, `after_task`, `reviewer` — appear every time, each marked dispatched or skipped, with a duration where one was measured and a reason naming the rule when it was not. A skipped step is recorded, never omitted: omission is exactly the shortcut the record exists to catch, and a summary that simply does not mention the explorer is indistinguishable from one where it was forgotten. It renders as a table for you plus a fenced JSON block for tooling.
+**Every task's Completion Summary records what actually ran.** All seven task-level steps — `enricher`, `before_task`, `explorer`, `planner`, `implementation`, `after_task`, `reviewer` — appear every time, each marked dispatched or skipped, with a duration where one was measured, a reason naming the rule when it was not, and — on the three steps that actually dispatch a subagent — an optional count of how many times it was dispatched. Read that count as a cost signal and nothing more: it is not a token figure, it does not rank two tasks against each other, and it is deliberately not the same number as the review loop's iteration count, since a dispatch that crashed still cost its tokens without buying a round. A skipped step is recorded, never omitted: omission is exactly the shortcut the record exists to catch, and a summary that simply does not mention the explorer is indistinguishable from one where it was forgotten. It renders as a table for you plus a fenced JSON block for tooling.
 
 An unreadable signal takes the full branch — absence of evidence is not evidence of a small task. Because this port fires `## before_task` / `## after_task` on the workflow's boundary writes, a skipped step also skips its hook, so on the `skip-all` row your `git pull` and test commands do not run for that task. Every skip is recorded in the task's `## Completion Summary` along with the rule that caused it, so a skip is never indistinguishable from a bug. The matrix mirrors the Claude Code plugin's, and `lib/select_workflow_branch.md` is its normative specification.
 
@@ -131,7 +131,9 @@ Install [stride-copilot-security-review](https://github.com/cheezy/stride-copilo
 
 When the section carries **real** entries (a `(none)` placeholder or an entry beginning `None —` does not count) and the plugin is installed, the specialist reviewer is dispatched with your working-tree diff and that list, and returns one verdict per consideration: `mitigated`, `partial` or `unmitigated`, each with a `file:line` evidence reference.
 
-**Any `partial` or `unmitigated` verdict sends the task back to implementation**, through the same review loop and the same 3-iteration cap that a `changes_requested` review already uses — so a persistently unaddressed consideration stops the run rather than looping forever. There is no second loop and no second cap.
+**A task can now complete with findings still open.** When the review loop reaches its two-round ceiling with only `important` and `minor` findings outstanding, those are **recorded** in the committed `## Completion Summary` — by severity, category and `file:line` — and the task completes rather than stopping incomplete. That is a deliberate change of terminus: a finding written where the next reader will find it beats a third review pass. The strict terminus is unchanged, and a `critical`, a `category: "security"` finding, or a standing escalation still stops the drive with no Completion Summary written.
+
+**Any `partial` or `unmitigated` verdict sends the task back to implementation**, through the same review loop and the same two-round ceiling that a `changes_requested` review already uses — so a persistently unaddressed consideration stops the run rather than looping forever. There is no second loop and no second cap.
 
 **Every failure mode is fail-closed**, because this step is itself a security control: no plugin means no verdict recorded rather than a passing one, and a malformed or empty verdict set is treated as unaddressed rather than downgraded to passed. Inability to confirm mitigation is never the same as confirming it.
 
