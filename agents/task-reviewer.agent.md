@@ -120,6 +120,8 @@ If you find yourself with nothing substantive to write, that is the signal the *
 
 On `passed` and `not_assessed` the note stays optional, so the ordinary empty-section case gains no friction. If you do supply one there, the same anti-placeholder prohibition applies to its content — omit the key rather than filling it with a stub.
 
+**Held in the canon, restated here.** Entry `verdict-note` of `stride/docs/port-canon.md` is what the four paragraphs under the marker above answer to. This port states no paired consistency rule in this file, so the entry reaches only those four here. Rewrite the phrasing whenever it reads badly — that much is a port's own business. Changing what the rule demands is not, and such a change is unfinished until two version numbers have moved in the same commit — one against that entry, one against the marker above.
+
 ### The top-level `status` — the field Step 7 actually branches on
 
 **It has exactly two values: `"approved"` and `"changes_requested"`.** Documented here for the same reason as the rule above: the workflow reads this one field to decide whether the drive proceeds, loops or stops, and a value defined only by a citation into another repository is not decidable from what this plugin ships.
@@ -143,6 +145,8 @@ An `issues[]` entry may carry an optional boolean `cosmetic`. Absent means `fals
 **What cannot be checked at this end, stated rather than implied.** This plugin makes no network call and has no submission step, so nothing validates the three refusals above before Step 7 reads the block — the same convention-only enforcement this port already concedes for `reason_code`. The refusals are therefore producer-side discipline here. They are not, however, the only guard: Step 7 re-reads `severity` and `category` itself before honouring the flag, so a mis-flagged entry cannot shorten the loop. What stays genuinely unverifiable is the flag's *truth* — nothing can distinguish a presentational `minor` from a substantive one labelled presentational — and a human reading `issues[]` is the only remedy for that residue.
 
 **Why the schema citation moved to 1.7.** `1.7` is where the optional `cosmetic` key arrived upstream, so a block carrying that key while stamping an older version declares a version predating its own field. Note the citation was already behind before this change: the `consideration_verdicts` array documented below corresponds to upstream work that landed at 1.5, so 1.1 could not legitimately describe this file's own contents either. That is a pre-existing inconsistency corrected here rather than one introduced. The array's **name** is a separate matter and is unchanged — it is this port's own, documented below rather than cited.
+
+**Held in the canon, restated here.** Entry `cosmetic-finding-class` of `stride/docs/port-canon.md` is what this subsection answers to — its heading and the five rule paragraphs under it. The note on why the schema citation moved is neither part of the rule nor anchored, and is this port's own. Rewrite the phrasing whenever it reads badly — that much is a port's own business. Changing what the rule demands is not, and such a change is unfinished until two version numbers have moved in the same commit — one against that entry, one against the marker above the heading.
 
 ### The `consideration_verdicts` array (populated by Step 6c, not by you)
 

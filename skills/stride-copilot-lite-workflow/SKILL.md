@@ -576,6 +576,8 @@ Three further boundaries keep this from becoming an escape hatch. An absent or e
 
 **The ceiling is prose here, and the suite is not a runtime gate.** `test/smoke.sh` pins these clauses against silent deletion, which is a real bound on the repository — but it is a human and CI gate, not something a live drive runs. The ceiling, the disposition and both carve-outs are enforced by an agent reading this paragraph. Stated rather than implied, on the same terms this port already uses for `reason_code`.
 
+**Held in the canon, restated here.** Entry `review-round-cap` of `stride/docs/port-canon.md` is what Step 7 answers to on the ceiling, beginning at the marker above and ending here. Rewrite the phrasing whenever it reads badly — that much is a port's own business. Changing what the rule demands is not, and such a change is unfinished until two version numbers have moved in the same commit — one against that entry, one against the marker.
+
 **Security-escalation branch.** If Step 6c returned any consideration whose status is `partial` or `unmitigated` — including one its fail-closed rule dispositioned that way from an anomalous verdict set — treat this iteration as `changes_requested` **whatever the `## Review Report`'s own status said**. Increment `review_iteration`, loop back to **Step 4**, address the consideration, then re-run Steps 5, 6 and **6c**.
 
 This deliberately adds **no second loop and no second cap**. It routes through the counter and the `max_review_iterations` bound that are already here, so a persistently unmitigated consideration stops the workflow instead of looping forever — and hitting the ceiling with a consideration still outstanding takes the stop path above — the one an outstanding escalation always takes: clear the marker, surface every consideration still `partial` or `unmitigated` with its evidence, write no Completion Summary. That is the strict terminus, which this change left alone; only the ordinary one moved. A task that exhausts the loop on a security consideration is incomplete in exactly the way one that exhausts it on a review finding is, and Step 1 picks it up again on the next run.
@@ -654,6 +656,8 @@ Applied to this loop the mapping is narrow. `explorer`, `planner` and `reviewer`
 
 **Record a duration only where one was measured.** The hook executor emits `duration_seconds` in its success JSON, so `before_task` and `after_task` have a real figure to record. Subagent dispatches usually do not, and a dispatched step with no available duration is recorded as dispatched **with the duration omitted** — never with an invented one. A fabricated number is worse than an absent one, because it looks like data.
 
+**Held in the canon, restated here.** Entry `reason-code-vocabulary` of `stride/docs/port-canon.md` is what the marker above introduces: the sentence beside it and the Code table below that. The duration paragraph immediately above this one carries no marker and is this port's own. Rewrite the phrasing whenever it reads badly — that much is a port's own business. Changing what the rule demands is not, and such a change is unfinished until two version numbers have moved in the same commit — one against that entry, one against the marker.
+
 <!-- canon:dispatch-count-telemetry v1 -->
 
 **Record how many times a subagent was dispatched, where you know it.** A `dispatched: true` entry may carry an optional integer `dispatch_count`. Omitting it is always allowed, and it is a cost signal rather than a progress one.
@@ -665,6 +669,8 @@ Applied to this loop the mapping is narrow. `explorer`, `planner` and `reviewer`
 **Read it with care, and do not do arithmetic on it.** It says how many times a subagent was invoked and nothing else. It is not a token count and must never be presented as one; it does not rank two tasks by cost, because dispatches of different kinds cost very different amounts; and `duration_seconds` divided by `dispatch_count` is not a per-dispatch figure, because the two measure different populations and a dispatch with no measured duration contributes to one and not the other. An absent count means it was not recorded, never that the step ran once. And nothing validates the value on the way in — this plugin makes no network call, so the key is closed by convention exactly as `reason_code` is.
 
 **Record a count only where you actually know it**, on the same rule as the duration above: an invented number is worse than an absent one.
+
+**Held in the canon, restated here.** Entry `dispatch-count-telemetry` of `stride/docs/port-canon.md` is what the five paragraphs under the marker above answer to. Rewrite the phrasing whenever it reads badly — that much is a port's own business. Changing what the rule demands is not, and such a change is unfinished until two version numbers have moved in the same commit — one against that entry, one against the marker.
 
 **Render both a table and a fenced JSON block.** The table is what a human reads; the JSON is what tooling parses. This mirrors `task-reviewer`, which already emits a prose summary line alongside a fenced ```json block for exactly this reason. The table is the primary carrier — the summary is read by people first, and the JSON must never be the only place a fact appears.
 
