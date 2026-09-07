@@ -2,15 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.7.0] - 2026-09-06
-
-**Breaking:** the default `max_review_iterations` drops from 3 to 2, and a value above 2 is now clamped rather than honoured. A caller passing `max_review_iterations: 5` will see different behaviour. Reaching the ceiling is also no longer a single unconditional stop.
+## [0.8.0] - 2026-09-07
 
 ### Added — a back-reference beside every anchored rule (W2138)
 
 Six paragraphs close this port's seven anchored governed-rule statements. `lib/select_workflow_branch.md` takes one paragraph for both its matrix anchors, naming the four-property list, the disjointness paragraph and the two row notes that belong to `row-precedence` here — this file's own structure, which differs from the sibling lite port's flowing prose. `agents/task-reviewer.agent.md` takes two, and the workflow skill three.
 
 The verdict-note paragraph records something specific to this port: it states no paired consistency rule in that file, so the entry reaches only the four paragraphs under the marker. Each paragraph names the owning entry, leaves the phrasing to this port, and says a substance change is unfinished until two version numbers move together. None restates the rule, and none writes the anchor comment's token, which this port's suite counts.
+
+## [0.7.0] - 2026-09-06
+
+**Breaking:** the default `max_review_iterations` drops from 3 to 2, and a value above 2 is now clamped rather than honoured. A caller passing `max_review_iterations: 5` will see different behaviour. Reaching the ceiling is also no longer a single unconditional stop.
 
 ### Changed — the review loop's ceiling is two rounds, and reaching it records rather than always stopping (W2171)
 
