@@ -2,6 +2,23 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Added — a statement of how a session ends here, and its anchor (D306)
+
+The note added in W2171 recorded that canon entry `stop-hook-capability` was
+still unaddressed and that the fleet check was red because of it. This closes it
+properly. A new README section states what the note could not: Copilot CLI does
+expose a refusable session end — `agentStop`, a stdout decision at exit 0, and a
+runtime cap of eight consecutive refusals — and this port registers no gate
+against it.
+
+That is a consequence of the plugin's shape rather than an omission: it renders
+task markdown and talks to no server, so it has no queue to check and no
+completion to remember, and a gate would have nothing to refuse on. The canon row
+stays `required`, since the runtime is capable; the anchor now sits beside that
+statement with its back-reference below.
+
 ## [0.8.0] - 2026-09-07
 
 ### Added — a back-reference beside every anchored rule (W2138)

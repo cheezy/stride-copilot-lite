@@ -231,6 +231,32 @@ This is a coordination mechanism, not a security boundary — any local process 
 
 These files are written into **your** project under `.stride-copilot-lite/`: the activation marker, the boundary marker, and a small fired-record. All are transient session state — add `.stride-copilot-lite/` to your project's `.gitignore` so a workflow run does not leave them in a commit.
 
+### How a session ends here, and what does not stop it
+
+<!-- canon:stop-hook-capability v1 -->
+
+**Canon-governed — entry `stop-hook-capability` in `stride/docs/port-canon.md`.**
+That entry owns the rule; this section is this port's own answer to it, and the
+two version together — changing what the rule obliges bumps the canon entry and
+the anchor above in the same change.
+
+GitHub Copilot CLI does expose a refusable session end. It fires `agentStop`
+(aliased `Stop`), reads `{"decision":"block","reason":"..."}` from stdout at exit
+0, and caps a repeating refusal at eight in a row so a gate cannot wedge a
+session indefinitely. None of that is exercised here: **no stop gate is
+registered in `hooks/hooks.json`**, which carries tool hooks only.
+
+That is a deliberate consequence of what this plugin is rather than a gap left
+open. A stop gate in this fleet exists to catch one situation — a finished task
+with more claimable work waiting — and this port has no queue to consult and
+keeps no record of a completion, because it produces task markdown on disk and
+talks to no server. With nothing to test, there is nothing to refuse on.
+
+What is absent, then, is the thing a gate would ask about rather than the runtime
+surface it would use — so this is not the structural incapability that takes a
+port outside the rule. Where the canon records that scope is its own business;
+this section states the fact the record rests on.
+
 ### Variables available to your hook commands
 
 Each command runs with these in its environment, all derived from your goal and task markdown — there is no server involved:
